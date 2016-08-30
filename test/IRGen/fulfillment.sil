@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend -primary-file %s -emit-ir | FileCheck %s
+// RUN: %target-swift-frontend -primary-file %s -emit-ir | %FileCheck %s
 
 // REQUIRES: CPU=x86_64
 
@@ -47,7 +47,7 @@ bb0(%0 : $B<T, U>):
   return %3 : $()
 }
 
-// CHECK-LABEL: define hidden void @test_23121786(%C11fulfillment1A*, %C11fulfillment1A*)
+// CHECK-LABEL: define hidden void @test_23121786(%C11fulfillment1A*, %C11fulfillment1A{{.*}}*)
 sil hidden @test_23121786 : $@convention(thin) <T> (@owned A<A<T>>, @owned A<T>) -> () {
 bb0(%0 : $A<A<T>>, %1 : $A<T>):
   %2 = tuple ()

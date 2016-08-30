@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend -emit-ir %s | FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-%target-ptrsize
+// RUN: %target-swift-frontend -emit-ir %s | %FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-%target-ptrsize
 sil_stage canonical
 
 import Builtin
@@ -38,7 +38,7 @@ entry:
 
 @_alignment(32)
 struct OverAligned {
-  var x,y,z,w: Builtin.Int64
+  var x, y, z, w: Builtin.Int64
 }
 
 // CHECK-LABEL: define{{( protected)?}} void @pod_box_32_32

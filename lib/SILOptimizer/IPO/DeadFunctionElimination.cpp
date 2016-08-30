@@ -55,7 +55,7 @@ protected:
 
   llvm::SmallSetVector<SILFunction *, 16> Worklist;
 
-  llvm::SmallPtrSet<SILFunction *, 100> AliveFunctions;
+  llvm::SmallPtrSet<SILFunction *, 32> AliveFunctions;
 
   /// Checks is a function is alive, e.g. because it is visible externally.
   bool isAnchorFunction(SILFunction *F) {
@@ -202,12 +202,14 @@ protected:
     SILLinkage linkage;
     switch (accessibility) {
     case Accessibility::Private:
+    case Accessibility::FilePrivate:
       linkage = SILLinkage::Private;
       break;
     case Accessibility::Internal:
       linkage = SILLinkage::Hidden;
       break;
     case Accessibility::Public:
+    case Accessibility::Open:
       linkage = SILLinkage::Public;
       break;
     }
@@ -217,8 +219,7 @@ protected:
     // If a vtable or witness table (method) is only visible in another module
     // it can be accessed inside that module and we don't see this access.
     // We hit this case e.g. if a table is imported from the stdlib.
-    if (decl->getDeclContext()->getParentModule() !=
-        Module->getAssociatedContext()->getParentModule())
+    if (decl->getDeclContext()->getParentModule() != Module->getSwiftModule())
       return true;
 
     return false;
@@ -348,6 +349,9 @@ class DeadFunctionElimination : FunctionLivenessComputation {
     // Check default witness methods.
     for (SILDefaultWitnessTable &WT : Module->getDefaultWitnessTableList()) {
       for (const SILDefaultWitnessTable::Entry &entry : WT.getEntries()) {
+        if (!entry.isValid())
+          continue;
+
         SILFunction *F = entry.getWitness();
         auto *fd = cast<AbstractFunctionDecl>(entry.getRequirement().getDecl());
 
@@ -411,8 +415,9 @@ public:
       if (!isAlive(F)) {
         DEBUG(llvm::dbgs() << "  erase dead function " << F->getName() << "\n");
         NumDeadFunc++;
+        DFEPass->invalidateAnalysisForDeadFunction(F,
+                                     SILAnalysis::InvalidationKind::Everything);
         Module->eraseFunction(F);
-        DFEPass->invalidateAnalysis(F, SILAnalysis::InvalidationKind::Everything);
       }
     }
   }
@@ -488,9 +493,6 @@ class ExternalFunctionDefinitionsElimination : FunctionLivenessComputation {
     Blocks.clear();
     assert(F->isExternalDeclaration() &&
            "Function should be an external declaration");
-    if (F->getRefCount() == 0)
-      F->getModule().eraseFunction(F);
-
     NumEliminatedExternalDefs++;
     return true;
   }
@@ -508,16 +510,16 @@ public:
     findAliveFunctions();
     // Get rid of definitions for all global functions that are not marked as
     // alive.
-    bool NeedUpdate = false;
     for (auto FI = Module->begin(), EI = Module->end(); FI != EI;) {
       SILFunction *F = &*FI;
       ++FI;
       // Do not remove bodies of any functions that are alive.
       if (!isAlive(F)) {
         if (tryToConvertExternalDefinitionIntoDeclaration(F)) {
-          NeedUpdate = true;
-          DFEPass->invalidateAnalysis(F,
+          DFEPass->invalidateAnalysisForDeadFunction(F,
                                     SILAnalysis::InvalidationKind::Everything);
+          if (F->getRefCount() == 0)
+            F->getModule().eraseFunction(F);
         }
       }
     }

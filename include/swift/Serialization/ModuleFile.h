@@ -43,6 +43,7 @@ class ProtocolConformance;
 /// A serialized module, along with the tools to access it.
 class ModuleFile : public LazyMemberLoader {
   friend class SerializedASTFile;
+  friend class SILDeserializer;
   using Status = serialization::Status;
 
   /// A reference back to the AST representation of the file.
@@ -75,6 +76,9 @@ class ModuleFile : public LazyMemberLoader {
 
   /// The data blob containing all of the module's identifiers.
   StringRef IdentifierData;
+
+  /// A callback to be invoked every time a type was deserialized.
+  llvm::function_ref<void(Type)> DeserializedTypeCallback;
 
 public:
   /// Represents another module that has been imported as a dependency.
@@ -276,6 +280,7 @@ private:
 
   std::unique_ptr<SerializedDeclTable> TopLevelDecls;
   std::unique_ptr<SerializedDeclTable> OperatorDecls;
+  std::unique_ptr<SerializedDeclTable> PrecedenceGroupDecls;
   std::unique_ptr<SerializedDeclTable> ExtensionDecls;
   std::unique_ptr<SerializedDeclTable> ClassMembersByName;
   std::unique_ptr<SerializedDeclTable> OperatorMethodDecls;
@@ -350,7 +355,8 @@ private:
   /// Constructs a new module and validates it.
   ModuleFile(std::unique_ptr<llvm::MemoryBuffer> moduleInputBuffer,
              std::unique_ptr<llvm::MemoryBuffer> moduleDocInputBuffer,
-             bool isFramework, serialization::ExtendedValidationInfo *extInfo);
+             bool isFramework, serialization::ValidationInfo &info,
+             serialization::ExtendedValidationInfo *extInfo);
 
 public:
   /// Change the status of the current module. Default argument marks the module
@@ -420,11 +426,35 @@ private:
   ParameterList *readParameterList();
   
   GenericParamList *maybeGetOrReadGenericParams(serialization::DeclID contextID,
-                                                DeclContext *DC,
-                                                llvm::BitstreamCursor &Cursor);
+                                                DeclContext *DC);
+
+  /// Reads a generic param list from \c DeclTypeCursor.
+  ///
+  /// If the record at the cursor is not a generic param list, returns null
+  /// without moving the cursor.
+  GenericParamList *maybeReadGenericParams(DeclContext *DC,
+                                     GenericParamList *outerParams = nullptr);
 
   /// Reads a set of requirements from \c DeclTypeCursor.
   void readGenericRequirements(SmallVectorImpl<Requirement> &requirements);
+
+  /// Reads a GenericEnvironment from \c DeclTypeCursor.
+  ///
+  /// Also returns the set of generic parameters read, in order, to help with
+  /// forming a GenericSignature.
+  GenericEnvironment *readGenericEnvironment(
+      SmallVectorImpl<GenericTypeParamType *> &paramTypes,
+      llvm::BitstreamCursor &Cursor);
+
+  /// Reads a GenericEnvironment followed by requirements from \c DeclTypeCursor.
+  ///
+  /// Returns the GenericEnvironment and the signature formed from the
+  /// generic parameters of the environment, together with the
+  /// read requirements.
+  ///
+  /// Returns nullptr if there's no generic signature here.
+  std::pair<GenericSignature *, GenericEnvironment *>
+  maybeReadGenericSignature();
 
   /// Populates the vector with members of a DeclContext from \c DeclTypeCursor.
   ///
@@ -434,6 +464,15 @@ private:
   /// because it reads from the cursor, it is not possible to reset the cursor
   /// after reading. Nothing should ever follow a MEMBERS record.
   bool readMembers(SmallVectorImpl<Decl *> &Members);
+
+  /// Populates the protocol's default witness table.
+  ///
+  /// Returns true if there is an error.
+  ///
+  /// Note: this destroys the cursor's position in the stream. Furthermore,
+  /// because it reads from the cursor, it is not possible to reset the cursor
+  /// after reading. Nothing should ever follow a DEFAULT_WITNESS_TABLE record.
+  bool readDefaultWitnessTable(ProtocolDecl *proto);
 
   /// Resolves a cross-reference, starting from the given module.
   ///
@@ -470,15 +509,16 @@ public:
   /// \param[out] extInfo Optionally, extra info serialized about the module.
   /// \returns Whether the module was successfully loaded, or what went wrong
   ///          if it was not.
-  static Status
+  static serialization::ValidationInfo
   load(std::unique_ptr<llvm::MemoryBuffer> moduleInputBuffer,
        std::unique_ptr<llvm::MemoryBuffer> moduleDocInputBuffer,
        bool isFramework, std::unique_ptr<ModuleFile> &theModule,
        serialization::ExtendedValidationInfo *extInfo = nullptr) {
+    serialization::ValidationInfo info;
     theModule.reset(new ModuleFile(std::move(moduleInputBuffer),
                                    std::move(moduleDocInputBuffer),
-                                   isFramework, extInfo));
-    return theModule->getStatus();
+                                   isFramework, info, extInfo));
+    return info;
   }
 
   // Out of line to avoid instantiation OnDiskChainedHashTable here.
@@ -513,6 +553,12 @@ public:
   ///
   /// If none is found, returns null.
   OperatorDecl *lookupOperator(Identifier name, DeclKind fixity);
+
+  /// Searches the module's precedence groups for one with the given
+  /// name and fixity.
+  ///
+  /// If none is found, returns null.
+  PrecedenceGroupDecl *lookupPrecedenceGroup(Identifier name);
 
   /// Adds any imported modules to the given vector.
   void getImportedModules(SmallVectorImpl<Module::ImportedModule> &results,
@@ -588,17 +634,6 @@ public:
     return ModuleInputBuffer->getBufferIdentifier();
   }
 
-  /// Returns the module name as stored in the serialized data.
-  StringRef getModuleName() const {
-    return Name;
-  }
-
-  /// Returns the target triple the module was compiled for,
-  /// as stored in the serialized data.
-  StringRef getTargetTriple() const {
-    return TargetTriple;
-  }
-
   /// AST-verify imported decls.
   ///
   /// Has no effect in NDEBUG builds.
@@ -618,10 +653,14 @@ public:
                                        uint64_t contextData) override;
 
   Optional<StringRef> getGroupNameById(unsigned Id) const;
+  Optional<StringRef> getSourceFileNameById(unsigned Id) const;
   Optional<StringRef> getGroupNameForDecl(const Decl *D) const;
+  Optional<StringRef> getSourceFileNameForDecl(const Decl *D) const;
+  Optional<unsigned> getSourceOrderForDecl(const Decl *D) const;
   void collectAllGroups(std::vector<StringRef> &Names) const;
   Optional<CommentInfo> getCommentForDecl(const Decl *D) const;
   Optional<CommentInfo> getCommentForDeclByUSR(StringRef USR) const;
+  Optional<StringRef> getGroupNameByUSR(StringRef USR) const;
 
   Identifier getDiscriminatorForPrivateValue(const ValueDecl *D);
 
@@ -675,14 +714,6 @@ public:
   /// Read the given normal conformance from the current module file.
   NormalProtocolConformance *
   readNormalConformance(serialization::NormalConformanceID id);
-
-  /// Reads a generic param list from \c DeclTypeCursor.
-  ///
-  /// If the record at the cursor is not a generic param list, returns null
-  /// without moving the cursor.
-  GenericParamList *maybeReadGenericParams(DeclContext *DC,
-                                     llvm::BitstreamCursor &Cursor,
-                                     GenericParamList *outerParams = nullptr);
 
   /// Reads a foreign error conformance from \c DeclTypeCursor, if present.
   Optional<ForeignErrorConvention> maybeReadForeignErrorConvention();

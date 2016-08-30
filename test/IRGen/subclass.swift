@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend -primary-file %s -emit-ir | FileCheck %s
+// RUN: %target-swift-frontend -primary-file %s -emit-ir | %FileCheck %s
 
 // REQUIRES: CPU=x86_64
 // REQUIRES: objc_interop
@@ -57,7 +57,7 @@ class G<T> : A {
 // Ensure that downcasts to generic types instantiate generic metadata instead
 // of trying to reference global metadata. <rdar://problem/14265663>
 
-// CHECK: define hidden %C8subclass1G* @_TF8subclass9a_to_gintF{{.*}}(%C8subclass1A*) {{.*}} {
+// CHECK: define hidden %GC8subclass1GSi_* @_TF8subclass9a_to_gintF{{.*}}(%C8subclass1A*) {{.*}} {
 func a_to_gint(a: A) -> G<Int> {
   // CHECK: call %swift.type* @_TMaGC8subclass1GSi_()
   // CHECK: call i8* @swift_dynamicCastClassUnconditional

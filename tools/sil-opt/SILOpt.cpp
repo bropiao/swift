@@ -98,7 +98,7 @@ Passes(llvm::cl::desc("Passes:"),
        llvm::cl::values(
 #define PASS(ID, NAME, DESCRIPTION) clEnumValN(PassKind::ID, NAME, DESCRIPTION),
 #include "swift/SILOptimizer/PassManager/Passes.def"
-			clEnumValEnd));
+       clEnumValEnd));
 
 static llvm::cl::opt<bool>
 PrintStats("print-stats", llvm::cl::desc("Print various statistics"));
@@ -210,6 +210,7 @@ int main(int argc, char **argv) {
   // cache.
   Invocation.getClangImporterOptions().ModuleCachePath = ModuleCachePath;
   Invocation.setParseStdlib();
+  Invocation.getLangOptions().DisableAvailabilityChecking = true;
   Invocation.getLangOptions().EnableAccessControl = false;
   Invocation.getLangOptions().EnableObjCAttrRequiresFoundation = false;
 

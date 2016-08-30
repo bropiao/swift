@@ -5,8 +5,9 @@ func test() {
   #^A^#
 }
 
+// XFAIL: broken_std_regex
 // RUN: %complete-test -hide-none -group=none -tok=A %s -raw -- -I %S/Inputs -F %S/../Inputs/libIDE-mock-sdk > %t
-// RUN: FileCheck %s < %t
+// RUN: %FileCheck %s < %t
 
 // Swift == 1
 // CHECK-LABEL:  key.name: "abs(:)",
@@ -17,7 +18,7 @@ func test() {
 // CHECK-NEXT:   key.context: source.codecompletion.context.othermodule,
 // CHECK-NEXT:   key.moduleimportdepth: 1,
 // CHECK-NEXT:   key.num_bytes_to_erase: 0,
-// CHECK:   key.associated_usrs: "s:Fs3absuRxs16SignedNumberTyperFxx",
+// CHECK:   key.associated_usrs: "s:Fs3absuRxs12SignedNumberrFxx",
 // CHECK-NEXT:   key.modulename: "Swift"
 // CHECK-NEXT: },
 

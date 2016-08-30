@@ -17,6 +17,7 @@
 #include "swift/SILOptimizer/Analysis/ValueTracking.h"
 #include "swift/SILOptimizer/PassManager/PassManager.h"
 #include "swift/SIL/SILArgument.h"
+#include "swift/SIL/DebugUtils.h"
 #include "llvm/Support/GraphWriter.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -30,13 +31,23 @@ static bool isProjection(ValueBase *V) {
     case ValueKind::TupleElementAddrInst:
     case ValueKind::UncheckedTakeEnumDataAddrInst:
     case ValueKind::StructExtractInst:
-    case ValueKind::TupleExtractInst:
     case ValueKind::UncheckedEnumDataInst:
     case ValueKind::MarkDependenceInst:
     case ValueKind::PointerToAddressInst:
     case ValueKind::AddressToPointerInst:
     case ValueKind::InitEnumDataAddrInst:
       return true;
+    case ValueKind::TupleExtractInst: {
+      auto *TEI = cast<TupleExtractInst>(V);
+      // Special handling for extracting the pointer-result from an
+      // array construction. We handle this like a ref_element_addr
+      // rather than a projection. See the handling of tuple_extract
+      // in analyzeInstruction().
+      if (TEI->getFieldNo() == 1 &&
+          ArraySemanticsCall(TEI->getOperand(), "array.uninitialized", false))
+        return false;
+      return true;
+    }
     default:
       return false;
   }
@@ -503,6 +514,11 @@ bool EscapeAnalysis::ConnectionGraph::mergeFrom(ConnectionGraph *SourceGraph,
       // content nodes.
       if (DestReachable) {
         DestFrom = defer(DestFrom, DestReachable, Changed);
+      } else if (SourceReachable->getEscapeState() >= EscapeState::Global) {
+        // If we don't have a mapped node in the destination graph we still have
+        // to honor its escaping state. We do that simply by setting the source
+        // node of the defer-edge to escaping.
+        Changed |= DestFrom->mergeEscapeState(EscapeState::Global);
       }
 
       for (auto *Deferred : SourceReachable->defersTo) {
@@ -715,12 +731,13 @@ namespace llvm {
   template <> struct GraphTraits<CGForDotView::Node *> {
     typedef CGForDotView::Node NodeType;
     typedef CGForDotView::child_iterator ChildIteratorType;
+    typedef CGForDotView::Node *NodeRef;
 
-    static NodeType *getEntryNode(NodeType *N) { return N; }
-    static inline ChildIteratorType child_begin(NodeType *N) {
+    static NodeRef getEntryNode(NodeRef N) { return N; }
+    static inline ChildIteratorType child_begin(NodeRef N) {
       return N->Children.begin();
     }
-    static inline ChildIteratorType child_end(NodeType *N) {
+    static inline ChildIteratorType child_end(NodeRef N) {
       return N->Children.end();
     }
   };
@@ -728,8 +745,9 @@ namespace llvm {
   template <> struct GraphTraits<CGForDotView *>
   : public GraphTraits<CGForDotView::Node *> {
     typedef CGForDotView *GraphType;
+    typedef CGForDotView::Node *NodeRef;
 
-    static NodeType *getEntryNode(GraphType F) { return nullptr; }
+    static NodeRef getEntryNode(GraphType F) { return nullptr; }
 
     typedef CGForDotView::iterator nodes_iterator;
     static nodes_iterator nodes_begin(GraphType OCG) {
@@ -1090,6 +1108,15 @@ void EscapeAnalysis::buildConnectionGraph(FunctionInfo *FInfo,
         FInfo->Graph.F->getName() << '\n');
 }
 
+/// Returns true if all uses of \p I are tuple_extract instructions.
+static bool onlyUsedInTupleExtract(SILInstruction *I) {
+  for (Operand *Use : getNonDebugUses(I)) {
+    if (!isa<TupleExtractInst>(Use->getUser()))
+      return false;
+  }
+  return true;
+}
+
 void EscapeAnalysis::analyzeInstruction(SILInstruction *I,
                                         FunctionInfo *FInfo,
                                         FunctionOrder &BottomUpOrder,
@@ -1108,13 +1135,20 @@ void EscapeAnalysis::analyzeInstruction(SILInstruction *I,
         // These array semantics calls do not capture anything.
         return;
       case ArrayCallKind::kArrayUninitialized:
-        // array.uninitialized may have a first argument which is the
-        // allocated array buffer. The call is like a struct(buffer)
-        // instruction.
-        if (CGNode *BufferNode = ConGraph->getNode(FAS.getArgument(0), this)) {
-          ConGraph->defer(ConGraph->getNode(I, this), BufferNode);
+        // Check if the result is used in the usual way: extracting the
+        // array and the element pointer with tuple_extract.
+        if (onlyUsedInTupleExtract(I)) {
+          // array.uninitialized may have a first argument which is the
+          // allocated array buffer. The call is like a struct(buffer)
+          // instruction.
+          if (CGNode *BufferNode = ConGraph->getNode(FAS.getArgument(0), this)) {
+            CGNode *ArrayNode = ConGraph->getNode(I, this);
+            CGNode *ArrayContent = ConGraph->getContentNode(ArrayNode);
+            ConGraph->defer(ArrayContent, BufferNode);
+          }
+          return;
         }
-        return;
+        break;
       case ArrayCallKind::kGetArrayOwner:
         if (CGNode *BufferNode = ConGraph->getNode(ASC.getSelf(), this)) {
           ConGraph->defer(ConGraph->getNode(I, this), BufferNode);
@@ -1150,8 +1184,57 @@ void EscapeAnalysis::analyzeInstruction(SILInstruction *I,
                           ConGraph->getContentNode(SelfNode));
         }
         return;
+      case ArrayCallKind::kWithUnsafeMutableBufferPointer:
+        // Model this like an escape of the elements of the array and a capture
+        // of anything captured by the closure.
+        // Self is passed inout.
+        if (CGNode *AddrArrayStruct = ConGraph->getNode(ASC.getSelf(), this)) {
+          CGNode *ArrayStructValueNode =
+              ConGraph->getContentNode(AddrArrayStruct);
+          // One content node for going from the array buffer pointer to
+          // the element address (like ref_element_addr).
+          CGNode *RefElement = ConGraph->getContentNode(ArrayStructValueNode);
+          // Another content node to actually load the element.
+          CGNode *ArrayContent = ConGraph->getContentNode(RefElement);
+          ConGraph->setEscapesGlobal(ArrayContent);
+          // The first non indirect result is the closure.
+          auto Args = FAS.getArgumentsWithoutIndirectResults();
+          setEscapesGlobal(ConGraph, Args[0]);
+          return;
+        }
+        break;
       default:
         break;
+    }
+
+    if (FAS.getReferencedFunction() &&
+        FAS.getReferencedFunction()->hasSemanticsAttr(
+            "self_no_escaping_closure") &&
+        ((FAS.hasIndirectResults() && FAS.getNumArguments() == 3) ||
+         (!FAS.hasIndirectResults() && FAS.getNumArguments() == 2)) &&
+        FAS.hasSelfArgument()) {
+      // The programmer has guaranteed that the closure will not capture the
+      // self pointer passed to it or anything that is transitively reachable
+      // from the pointer.
+      auto Args = FAS.getArgumentsWithoutIndirectResults();
+      // The first not indirect result argument is the closure.
+      setEscapesGlobal(ConGraph, Args[0]);
+      return;
+    }
+
+    if (FAS.getReferencedFunction() &&
+        FAS.getReferencedFunction()->hasSemanticsAttr(
+            "pair_no_escaping_closure") &&
+        ((FAS.hasIndirectResults() && FAS.getNumArguments() == 4) ||
+         (!FAS.hasIndirectResults() && FAS.getNumArguments() == 3)) &&
+        FAS.hasSelfArgument()) {
+      // The programmer has guaranteed that the closure will not capture the
+      // self pointer passed to it or anything that is transitively reachable
+      // from the pointer.
+      auto Args = FAS.getArgumentsWithoutIndirectResults();
+      // The second not indirect result argument is the closure.
+      setEscapesGlobal(ConGraph, Args[1]);
+      return;
     }
 
     if (RecursionDepth < MaxRecursionDepth) {
@@ -1248,6 +1331,35 @@ void EscapeAnalysis::analyzeInstruction(SILInstruction *I,
         ConGraph->setNode(I, PointsTo);
       }
       return;
+    case ValueKind::CopyAddrInst: {
+      // Be conservative if the dest may be the final release.
+      if (!cast<CopyAddrInst>(I)->isInitializationOfDest()) {
+        setAllEscaping(I, ConGraph);
+        break;
+      }
+
+      // A copy_addr is like a 'store (load src) to dest'.
+      CGNode *SrcAddrNode = ConGraph->getNode(I->getOperand(CopyAddrInst::Src),
+                                              this);
+      if (!SrcAddrNode) {
+        setAllEscaping(I, ConGraph);
+        break;
+      }
+
+      CGNode *LoadedValue = ConGraph->getContentNode(SrcAddrNode);
+      CGNode *DestAddrNode = ConGraph->getNode(
+        I->getOperand(CopyAddrInst::Dest), this);
+      if (DestAddrNode) {
+        // Create a defer-edge from the loaded to the stored value.
+        CGNode *PointsTo = ConGraph->getContentNode(DestAddrNode);
+        ConGraph->defer(PointsTo, LoadedValue);
+      } else {
+        // A store to an address we don't handle -> be conservative.
+        ConGraph->setEscapesGlobal(LoadedValue);
+      }
+      return;
+    }
+    break;
     case ValueKind::StoreInst:
     case ValueKind::StoreWeakInst:
       if (CGNode *ValueNode = ConGraph->getNode(I->getOperand(StoreInst::Src),
@@ -1303,6 +1415,21 @@ void EscapeAnalysis::analyzeInstruction(SILInstruction *I,
           }
         }
       }
+      return;
+    }
+    case ValueKind::TupleExtractInst: {
+      // This is a tuple_extract which extracts the second result of an
+      // array.uninitialized call. The first result is the array itself.
+      // The second result (which is a pointer to the array elements) must be
+      // the content node of the first result. It's just like a ref_element_addr
+      // instruction.
+      auto *TEI = cast<TupleExtractInst>(I);
+      assert(TEI->getFieldNo() == 1 &&
+          ArraySemanticsCall(TEI->getOperand(), "array.uninitialized", false)
+             && "tuple_extract should be handled as projection");
+      CGNode *ArrayNode = ConGraph->getNode(TEI->getOperand(), this);
+      CGNode *ArrayElements = ConGraph->getContentNode(ArrayNode);
+      ConGraph->setNode(I, ArrayElements);
       return;
     }
     case ValueKind::UncheckedRefCastInst:

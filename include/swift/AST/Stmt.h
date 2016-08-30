@@ -44,7 +44,7 @@ enum class StmtKind {
 /// Stmt - Base class for all statements in swift.
 class alignas(8) Stmt {
   Stmt(const Stmt&) = delete;
-  void operator=(const Stmt&) = delete;
+  Stmt& operator=(const Stmt&) = delete;
 
   /// Kind - The subclass of Stmt that this is.
   unsigned Kind : 31;
@@ -269,13 +269,10 @@ public:
   const VersionRange &getAvailableRange() const { return AvailableRange; }
   void setAvailableRange(const VersionRange &Range) { AvailableRange = Range; }
   
-  void getPlatformKeywordRanges(SmallVectorImpl<CharSourceRange>
-                                &PlatformRanges);
+  void getPlatformKeywordLocs(SmallVectorImpl<SourceLoc> &PlatformLocs);
 };
 
-  
 
-  
 /// This represents an entry in an "if" or "while" condition.  Pattern bindings
 /// can bind any number of names in the pattern binding decl, and may have an
 /// associated where clause.  When "if let" is involved, an arbitrary number of
@@ -839,11 +836,11 @@ class ForEachStmt : public LabeledStmt {
   Expr *WhereExpr = nullptr;
   BraceStmt *Body;
   
-  /// The generator variable along with its initializer.
-  PatternBindingDecl *Generator = nullptr;
-  /// The expression that advances the generator and returns an Optional with
+  /// The iterator variable along with its initializer.
+  PatternBindingDecl *Iterator = nullptr;
+  /// The expression that advances the iterator and returns an Optional with
   /// the next value or None to signal end-of-stream.
-  Expr *GeneratorNext = nullptr;
+  Expr *IteratorNext = nullptr;
 
 public:
   ForEachStmt(LabeledStmtInfo LabelInfo, SourceLoc ForLoc, Pattern *Pat,
@@ -877,14 +874,14 @@ public:
   Expr *getSequence() const { return Sequence; }
   void setSequence(Expr *S) { Sequence = S; }
   
-  /// Retrieve the pattern binding that contains the (implicit) generator
+  /// Retrieve the pattern binding that contains the (implicit) iterator
   /// variable and its initialization from the container.
-  PatternBindingDecl *getGenerator() const { return Generator; }
-  void setGenerator(PatternBindingDecl *G) { Generator = G; }
+  PatternBindingDecl *getIterator() const { return Iterator; }
+  void setIterator(PatternBindingDecl *It) { Iterator = It; }
   
-  /// Retrieve the expression that advances the generator.
-  Expr *getGeneratorNext() const { return GeneratorNext; }
-  void setGeneratorNext(Expr *E) { GeneratorNext = E; }
+  /// Retrieve the expression that advances the iterator.
+  Expr *getIteratorNext() const { return IteratorNext; }
+  void setIteratorNext(Expr *E) { IteratorNext = E; }
 
   /// getBody - Retrieve the body of the loop.
   BraceStmt *getBody() const { return Body; }
@@ -985,6 +982,9 @@ public:
 
   SourceLoc getStartLoc() const { return getLoc(); }
   SourceLoc getEndLoc() const { return getBody()->getEndLoc(); }
+  SourceRange getLabelItemsRange() const {
+    return ColonLoc.isValid() ? SourceRange(getLoc(), ColonLoc) : getSourceRange();
+  }
 
   bool isDefault() { return getCaseLabelItems()[0].isDefault(); }
 
@@ -1193,7 +1193,7 @@ public:
     return S->getKind() == StmtKind::Throw;
   }
 };
-  
+
 } // end namespace swift
 
-#endif
+#endif // SWIFT_AST_STMT_H

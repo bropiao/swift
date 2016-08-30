@@ -119,11 +119,21 @@ public:
   Optional<SILDeclRef> ObjCBoolToBoolFn;
   Optional<SILDeclRef> BoolToDarwinBooleanFn;
   Optional<SILDeclRef> DarwinBooleanToBoolFn;
-  Optional<SILDeclRef> NSErrorToErrorTypeFn;
-  Optional<SILDeclRef> ErrorTypeToNSErrorFn;
+  Optional<SILDeclRef> NSErrorToErrorFn;
+  Optional<SILDeclRef> ErrorToNSErrorFn;
 
   Optional<ProtocolDecl*> PointerProtocol;
-  
+
+  Optional<ProtocolDecl*> ObjectiveCBridgeable;
+  Optional<FuncDecl*> BridgeToObjectiveCRequirement;
+  Optional<FuncDecl*> UnconditionallyBridgeFromObjectiveCRequirement;
+  Optional<AssociatedTypeDecl*> BridgedObjectiveCType;
+
+  Optional<ProtocolDecl*> BridgedStoredNSError;
+  Optional<VarDecl*> NSErrorRequirement;
+
+  Optional<ProtocolConformance *> NSErrorConformanceToError;
+
 public:
   SILGenModule(SILModule &M, Module *SM, bool makeModuleFragile);
   ~SILGenModule();
@@ -175,7 +185,7 @@ public:
   /// Get or create the declaration of a reabstraction thunk with the
   /// given signature.
   SILFunction *getOrCreateReabstractionThunk(
-                                           GenericParamList *thunkContextParams,
+                                           GenericEnvironment *genericEnv,
                                            CanSILFunctionType thunkType,
                                            CanSILFunctionType fromType,
                                            CanSILFunctionType toType,
@@ -200,6 +210,7 @@ public:
   void visitEnumCaseDecl(EnumCaseDecl *d) {}
   void visitEnumElementDecl(EnumElementDecl *d) {}
   void visitOperatorDecl(OperatorDecl *d) {}
+  void visitPrecedenceGroupDecl(PrecedenceGroupDecl *d) {}
   void visitTypeAliasDecl(TypeAliasDecl *d) {}
   void visitAbstractTypeParamDecl(AbstractTypeParamDecl *d) {}
   void visitSubscriptDecl(SubscriptDecl *d) {}
@@ -246,7 +257,10 @@ public:
 
   /// Emits the default argument generator with the given expression.
   void emitDefaultArgGenerator(SILDeclRef constant, Expr *arg);
-  
+
+  /// Emits the stored property initializer for the given pattern.
+  void emitStoredPropertyInitialization(PatternBindingDecl *pd, unsigned i);
+
   /// Emits the default argument generator for the given function.
   void emitDefaultArgGenerators(SILDeclRef::Loc decl,
                                 ArrayRef<ParameterList*> paramLists);
@@ -345,9 +359,46 @@ public:
   SILDeclRef getObjCBoolToBoolFn();
   SILDeclRef getBoolToDarwinBooleanFn();
   SILDeclRef getDarwinBooleanToBoolFn();
-  SILDeclRef getNSErrorToErrorTypeFn();
-  SILDeclRef getErrorTypeToNSErrorFn();
+  SILDeclRef getNSErrorToErrorFn();
+  SILDeclRef getErrorToNSErrorFn();
+
+#define FUNC_DECL(NAME, ID) \
+  FuncDecl *get##NAME(SILLocation loc);
+#include "swift/AST/KnownDecls.def"
   
+  /// Retrieve the _ObjectiveCBridgeable protocol definition.
+  ProtocolDecl *getObjectiveCBridgeable(SILLocation loc);
+
+  /// Retrieve the _ObjectiveCBridgeable._bridgeToObjectiveC requirement.
+  FuncDecl *getBridgeToObjectiveCRequirement(SILLocation loc);
+
+  /// Retrieve the
+  /// _ObjectiveCBridgeable._unconditionallyBridgeFromObjectiveC
+  /// requirement.
+  FuncDecl *getUnconditionallyBridgeFromObjectiveCRequirement(SILLocation loc);
+
+  /// Retrieve the _ObjectiveCBridgeable._ObjectiveCType requirement.
+  AssociatedTypeDecl *getBridgedObjectiveCTypeRequirement(SILLocation loc);
+
+  /// Find the conformance of the given Swift type to the
+  /// _ObjectiveCBridgeable protocol.
+  ProtocolConformance *getConformanceToObjectiveCBridgeable(SILLocation loc,
+                                                            Type type);
+
+  /// Retrieve the _BridgedStoredNSError protocol definition.
+  ProtocolDecl *getBridgedStoredNSError(SILLocation loc);
+
+  /// Retrieve the _BridgedStoredNSError._nsError requirement.
+  VarDecl *getNSErrorRequirement(SILLocation loc);
+
+  /// Find the conformance of the given Swift type to the
+  /// _BridgedStoredNSError protocol.
+  Optional<ProtocolConformanceRef>
+  getConformanceToBridgedStoredNSError(SILLocation loc, Type type);
+
+  /// Retrieve the conformance of NSError to the Error protocol.
+  ProtocolConformance *getNSErrorConformanceToError();
+
   /// Report a diagnostic.
   template<typename...T, typename...U>
   InFlightDiagnostic diagnose(SourceLoc loc, Diag<T...> diag,
@@ -378,6 +429,11 @@ public:
   CanAnyFunctionType
   substSelfTypeIntoProtocolRequirementType(CanGenericFunctionType reqtTy,
                                            ProtocolConformance *conformance);
+
+  /// Emit a `mark_function_escape` instruction for top-level code when a
+  /// function or closure at top level refers to script globals.
+  void emitMarkFunctionEscapeForTopLevelCodeGlobals(SILLocation loc,
+                                                const CaptureInfo &captureInfo);
 
 private:
   /// Emit the deallocator for a class that uses the objc allocator.

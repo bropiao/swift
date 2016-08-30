@@ -1,58 +1,68 @@
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_1 | FileCheck %s -check-prefix=COMMON
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_2 | FileCheck %s -check-prefix=COMMON
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_3 | FileCheck %s -check-prefix=COMMON
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_4 | FileCheck %s -check-prefix=COMMON
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_5 | FileCheck %s -check-prefix=COMMON
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_6 | FileCheck %s -check-prefix=COMMON
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_1 | %FileCheck %s -check-prefix=COMMON
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_2 | %FileCheck %s -check-prefix=COMMON
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_3 | %FileCheck %s -check-prefix=COMMON
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_4 | %FileCheck %s -check-prefix=COMMON
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_5 | %FileCheck %s -check-prefix=COMMON
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_6 | %FileCheck %s -check-prefix=COMMON
 
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_IGNORED_1 | FileCheck %s -check-prefix=COMMON
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_IGNORED_2 | FileCheck %s -check-prefix=COMMON
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_IGNORED_3 | FileCheck %s -check-prefix=COMMON
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_IGNORED_1 | %FileCheck %s -check-prefix=COMMON
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_IGNORED_2 | %FileCheck %s -check-prefix=COMMON
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=EXPR_POSTFIX_BEGIN_IGNORED_3 | %FileCheck %s -check-prefix=COMMON
 
 // RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_FUNC_PARAM_1 > %t.param.txt
-// RUN: FileCheck %s -check-prefix=COMMON < %t.param.txt
-// RUN: FileCheck %s -check-prefix=FIND_FUNC_PARAM_1 < %t.param.txt
-// RUN: FileCheck %s -check-prefix=NO_SELF < %t.param.txt
+// RUN: %FileCheck %s -check-prefix=COMMON < %t.param.txt
+// RUN: %FileCheck %s -check-prefix=FIND_FUNC_PARAM_1 < %t.param.txt
+// RUN: %FileCheck %s -check-prefix=NO_SELF < %t.param.txt
 
 // RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_FUNC_PARAM_2 > %t.param.txt
-// RUN: FileCheck %s -check-prefix=COMMON < %t.param.txt
-// RUN: FileCheck %s -check-prefix=FIND_FUNC_PARAM_2 < %t.param.txt
-// RUN: FileCheck %s -check-prefix=NO_SELF < %t.param.txt
+// RUN: %FileCheck %s -check-prefix=COMMON < %t.param.txt
+// RUN: %FileCheck %s -check-prefix=FIND_FUNC_PARAM_2 < %t.param.txt
+// RUN: %FileCheck %s -check-prefix=NO_SELF < %t.param.txt
 
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_FUNC_PARAM_3 | FileCheck %s -check-prefix=FIND_FUNC_PARAM_3
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_FUNC_PARAM_4 | FileCheck %s -check-prefix=FIND_FUNC_PARAM_4
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_FUNC_PARAM_5 | FileCheck %s -check-prefix=FIND_FUNC_PARAM_5
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_FUNC_PARAM_6 | FileCheck %s -check-prefix=FIND_FUNC_PARAM_6
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_FUNC_PARAM_7 | FileCheck %s -check-prefix=FIND_FUNC_PARAM_7
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_FUNC_PARAM_3 | %FileCheck %s -check-prefix=FIND_FUNC_PARAM_3
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_FUNC_PARAM_4 | %FileCheck %s -check-prefix=FIND_FUNC_PARAM_4
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_FUNC_PARAM_5 | %FileCheck %s -check-prefix=FIND_FUNC_PARAM_5
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_FUNC_PARAM_6 | %FileCheck %s -check-prefix=FIND_FUNC_PARAM_6
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_FUNC_PARAM_7 | %FileCheck %s -check-prefix=FIND_FUNC_PARAM_7
 
 // RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_FUNC_PARAM_SELECTOR_1 > %t.param.txt
-// RUN: FileCheck %s -check-prefix=COMMON < %t.param.txt
-// RUN: FileCheck %s -check-prefix=FIND_FUNC_PARAM_SELECTOR_1 < %t.param.txt
-// RUN: FileCheck %s -check-prefix=NO_SELF < %t.param.txt
+// RUN: %FileCheck %s -check-prefix=COMMON < %t.param.txt
+// RUN: %FileCheck %s -check-prefix=FIND_FUNC_PARAM_SELECTOR_1 < %t.param.txt
+// RUN: %FileCheck %s -check-prefix=NO_SELF < %t.param.txt
 
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_CONSTRUCTOR_PARAM_1 | FileCheck %s -check-prefix=FIND_CONSTRUCTOR_PARAM_1
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_CONSTRUCTOR_PARAM_2 | FileCheck %s -check-prefix=FIND_CONSTRUCTOR_PARAM_2
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_CONSTRUCTOR_PARAM_3 | FileCheck %s -check-prefix=FIND_CONSTRUCTOR_PARAM_3
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_CONSTRUCTOR_PARAM_4 | FileCheck %s -check-prefix=FIND_CONSTRUCTOR_PARAM_4
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_CONSTRUCTOR_PARAM_5 | FileCheck %s -check-prefix=FIND_CONSTRUCTOR_PARAM_5
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_CONSTRUCTOR_PARAM_1 | %FileCheck %s -check-prefix=FIND_CONSTRUCTOR_PARAM_1
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_CONSTRUCTOR_PARAM_2 | %FileCheck %s -check-prefix=FIND_CONSTRUCTOR_PARAM_2
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_CONSTRUCTOR_PARAM_3 | %FileCheck %s -check-prefix=FIND_CONSTRUCTOR_PARAM_3
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_CONSTRUCTOR_PARAM_4 | %FileCheck %s -check-prefix=FIND_CONSTRUCTOR_PARAM_4
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_CONSTRUCTOR_PARAM_5 | %FileCheck %s -check-prefix=FIND_CONSTRUCTOR_PARAM_5
 
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_CONSTRUCTOR_PARAM_SELECTOR_1 | FileCheck %s -check-prefix=FIND_CONSTRUCTOR_PARAM_SELECTOR_1
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_CONSTRUCTOR_PARAM_SELECTOR_1 | %FileCheck %s -check-prefix=FIND_CONSTRUCTOR_PARAM_SELECTOR_1
 
 // RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_DESTRUCTOR_PARAM_1 > %t.param.txt
-// RUN: FileCheck %s -check-prefix=FIND_DESTRUCTOR_PARAM_1 < %t.param.txt
+// RUN: %FileCheck %s -check-prefix=FIND_DESTRUCTOR_PARAM_1 < %t.param.txt
 
 // RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=FIND_DESTRUCTOR_PARAM_2 > %t.param.txt
-// RUN: FileCheck %s -check-prefix=FIND_DESTRUCTOR_PARAM_2 < %t.param.txt
+// RUN: %FileCheck %s -check-prefix=FIND_DESTRUCTOR_PARAM_2 < %t.param.txt
 
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=NO_PLACEHOLDER_NAMES_1 | FileCheck %s -check-prefix=NO_PLACEHOLDER_NAMES_1
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=NO_PLACEHOLDER_NAMES_1 | %FileCheck %s -check-prefix=NO_PLACEHOLDER_NAMES_1
 
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_INVALID_1 | FileCheck %s -check-prefix=COMMON
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_INVALID_2 | FileCheck %s -check-prefix=COMMON
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_INVALID_3 | FileCheck %s -check-prefix=COMMON
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_INVALID_5 | FileCheck %s -check-prefix=COMMON
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_INVALID_6 | FileCheck %s -check-prefix=COMMON
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_INVALID_7 | FileCheck %s -check-prefix=COMMON
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_INVALID_8 | FileCheck %s -check-prefix=COMMON
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_INVALID_1 | %FileCheck %s -check-prefix=COMMON
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_INVALID_2 | %FileCheck %s -check-prefix=COMMON
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_INVALID_3 | %FileCheck %s -check-prefix=COMMON
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_INVALID_5 | %FileCheck %s -check-prefix=COMMON
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_INVALID_6 | %FileCheck %s -check-prefix=COMMON
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_INVALID_7 | %FileCheck %s -check-prefix=COMMON
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_INVALID_8 | %FileCheck %s -check-prefix=COMMON
+
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=GENERIC_TYPEALIAS_1 | %FileCheck %s -check-prefix=MY_ALIAS
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=GENERIC_TYPEALIAS_2 | %FileCheck %s -check-prefix=MY_ALIAS
+
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_FOR_EACH_1 | %FileCheck %s -check-prefix=IN_FOR_EACH_1
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_FOR_EACH_2 | %FileCheck %s -check-prefix=IN_FOR_EACH_1
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_FOR_EACH_3 | %FileCheck %s -check-prefix=IN_FOR_EACH_3
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=IN_FOR_EACH_4 | %FileCheck %s -check-prefix=IN_FOR_EACH_3
+
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=DEPRECATED_1 | %FileCheck %s -check-prefix=DEPRECATED_1
 
 //
 // Test code completion at the beginning of expr-postfix.
@@ -156,7 +166,7 @@ func testExprPostfixBeginIgnored3(fooParam: FooStruct) {
 
 //===--- Test that we include function parameters in completion results.
 
-func testFindFuncParam1(fooParam: FooStruct, a: Int, b: Float, c: inout Double)(d: inout Double) {
+func testFindFuncParam1(fooParam: FooStruct, a: Int, b: Float, c: inout Double, d: inout Double) {
   #^FIND_FUNC_PARAM_1^#
 // FIND_FUNC_PARAM_1: Begin completions
 // FIND_FUNC_PARAM_1-DAG: Decl[LocalVar]/Local: a[#Int#]{{; name=.+$}}
@@ -175,7 +185,7 @@ func testFindFuncParam2<Foo : FooProtocol>(fooParam: FooStruct, foo: Foo) {
 }
 
 struct TestFindFuncParam3_4 {
-  func testFindFuncParam3(a: Int, b: Float)(c: Double) {
+  func testFindFuncParam3(a: Int, b: Float, c: Double) {
     #^FIND_FUNC_PARAM_3^#
 // FIND_FUNC_PARAM_3: Begin completions
 // FIND_FUNC_PARAM_3-DAG: Decl[LocalVar]/Local: self[#TestFindFuncParam3_4#]{{; name=.+$}}
@@ -221,7 +231,7 @@ struct TestFindFuncParam5_6<T> {
 }
 
 class TestFindFuncParam7 {
-  func testFindFuncParam7(a: Int, b: Float)(c: Double) {
+  func testFindFuncParam7(a: Int, b: Float, c: Double) {
     #^FIND_FUNC_PARAM_7^#
 // FIND_FUNC_PARAM_7: Begin completions
 // FIND_FUNC_PARAM_7-DAG: Decl[LocalVar]/Local: self[#TestFindFuncParam7#]{{; name=.+$}}
@@ -387,3 +397,80 @@ func foo() -> Undeclared {
   var fooParam = FooStruct()
   #^IN_INVALID_8^#
 }
+
+func testGenericTypealias1() {
+  typealias MyAlias<T> = (T, T)
+  let x: MyAlias<Int> = (1, 2)
+  var y: (Int, Int)
+  y = #^GENERIC_TYPEALIAS_1^#
+}
+// FIXME: should we use the alias name in the annotation?
+// MY_ALIAS: Decl[TypeAlias]/Local:                        MyAlias[#(T, T)#];
+// MY_ALIAS: Decl[LocalVar]/Local/TypeRelation[Identical]: x[#(Int, Int)#];
+// MY_ALIAS: Decl[LocalVar]/Local/TypeRelation[Identical]: y[#(Int, Int)#];
+func testGenericTypealias2() {
+  typealias MyAlias<T> = (T, T)
+  let x: (Int, Int) = (1, 2)
+  var y: MyAlias<Int>
+  y = #^GENERIC_TYPEALIAS_2^#
+}
+
+func testInForEach1(arg: Int) {
+  let local = 2
+  for index in #^IN_FOR_EACH_1^# {
+    let inBody = 3
+  }
+  let after = 4
+// IN_FOR_EACH_1-NOT: Decl[LocalVar]
+// IN_FOR_EACH_1: Decl[LocalVar]/Local:               local[#Int#];
+// FIXME: shouldn't show 'after' here.
+// IN_FOR_EACH_1: Decl[LocalVar]/Local:               after[#Int#];
+// IN_FOR_EACH_1: Decl[LocalVar]/Local:               arg[#Int#];
+// IN_FOR_EACH_1-NOT: Decl[LocalVar]
+}
+func testInForEach2(arg: Int) {
+  let local = 2
+  for index in 1 ... #^IN_FOR_EACH_2^# {
+    let inBody = 3
+  }
+  let after = 4
+}
+func testInForEach3(arg: Int) {
+  let local = 2
+  for index: Int in 1 ... 2 where #^IN_FOR_EACH_3^# {
+    let inBody = 3
+  }
+  let after = 4
+// IN_FOR_EACH_3-NOT: Decl[LocalVar]
+// IN_FOR_EACH_3: Decl[LocalVar]/Local:               index[#Int#];
+// IN_FOR_EACH_3-NOT: Decl[LocalVar]
+// IN_FOR_EACH_3: Decl[LocalVar]/Local:               local[#Int#];
+// FIXME: shouldn't show 'after' here.
+// IN_FOR_EACH_3: Decl[LocalVar]/Local:               after[#Int#];
+// IN_FOR_EACH_3: Decl[LocalVar]/Local:               arg[#Int#];
+// IN_FOR_EACH_3-NOT: Decl[LocalVar]
+}
+func testInForEach4(arg: Int) {
+  let local = 2
+  for index in 1 ... 2 {
+    #^IN_FOR_EACH_4^#
+  }
+  let after = 4
+}
+
+@available(*, deprecated)
+struct Deprecated {
+  @available(*, deprecated)
+  func testDeprecated() {
+    @available(*, deprecated) let local = 1
+    @available(*, deprecated) func f() {}
+
+    #^DEPRECATED_1^#
+  }
+}
+// DEPRECATED_1: Begin completions
+// DEPRECATED_1-DAG: Decl[LocalVar]/Local/NotRecommended: local[#Int#];
+// DEPRECATED_1-DAG: Decl[FreeFunction]/Local/NotRecommended: f()[#Void#];
+// DEPRECATED_1-DAG: Decl[InstanceMethod]/CurrNominal/NotRecommended: testDeprecated()[#Void#];
+// DEPRECATED_1-DAG: Decl[Struct]/CurrModule/NotRecommended: Deprecated[#Deprecated#];
+// DEPRECATED_1: End completions

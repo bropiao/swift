@@ -20,10 +20,6 @@
 #include "swift/Basic/Range.h"
 #include "swift/SIL/SILInstruction.h"
 
-namespace llvm {
-  template <class T> struct GraphTraits;
-};
-
 namespace swift {
 class SILFunction;
 class SILArgument;
@@ -73,9 +69,6 @@ public:
 
   /// This method unlinks 'self' from the containing SILFunction and deletes it.
   void eraseFromParent();
-
-  /// This method unlinks 'self' from the containing SILFunction.
-  void removeFromParent();
 
   /// Returns true if this BB is the entry BB of its parent.
   bool isEntry() const;

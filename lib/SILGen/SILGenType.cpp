@@ -25,7 +25,6 @@
 #include "swift/AST/TypeMemberVisitor.h"
 #include "swift/Basic/Fallthrough.h"
 #include "swift/SIL/SILArgument.h"
-#include "swift/SIL/SILWitnessVisitor.h"
 #include "swift/SIL/TypeLowering.h"
 
 using namespace swift;
@@ -36,10 +35,14 @@ SILFunction *SILGenModule::getDynamicThunk(SILDeclRef constant,
   // Mangle the constant with a _TTD header.
   auto name = constant.mangle("_TTD");
 
+  IsFragile_t isFragile = IsNotFragile;
+  if (makeModuleFragile)
+    isFragile = IsFragile;
+  if (constant.isFragile())
+    isFragile = IsFragile;
   auto F = M.getOrCreateFunction(constant.getDecl(), name, SILLinkage::Shared,
                             constantInfo.getSILType().castTo<SILFunctionType>(),
-                            IsBare, IsTransparent,
-                            makeModuleFragile ? IsFragile : IsNotFragile);
+                            IsBare, IsTransparent, isFragile, IsThunk);
 
   if (F->empty()) {
     // Emit the thunk if we haven't yet.
@@ -59,18 +62,6 @@ SILGenModule::emitVTableMethod(SILDeclRef derived, SILDeclRef base) {
   if (derived == base)
     return getFunction(derived, NotForDefinition);
 
-  // Generate the thunk name.
-  // TODO: If we allocated a new vtable slot for the derived method, then
-  // further derived methods would potentially need multiple thunks, and we
-  // would need to mangle the base method into the symbol as well.
-  auto name = derived.mangle("_TTV");
-
-  // If we already emitted this thunk, reuse it.
-  // TODO: Allocating new vtable slots for derived methods with different ABIs
-  // would invalidate the assumption that the same thunk is correct, as above.
-  if (auto existingThunk = M.lookUpFunction(name))
-    return existingThunk;
-
   // Determine the derived thunk type by lowering the derived type against the
   // abstraction pattern of the base.
   auto baseInfo = Types.getConstantInfo(base);
@@ -85,12 +76,25 @@ SILGenModule::emitVTableMethod(SILDeclRef derived, SILDeclRef base) {
   if (overrideInfo == derivedInfo)
     return getFunction(derived, NotForDefinition);
 
+  // Generate the thunk name.
+  // TODO: If we allocated a new vtable slot for the derived method, then
+  // further derived methods would potentially need multiple thunks, and we
+  // would need to mangle the base method into the symbol as well.
+  auto name = derived.mangle("_TTV");
+
+  // If we already emitted this thunk, reuse it.
+  // TODO: Allocating new vtable slots for derived methods with different ABIs
+  // would invalidate the assumption that the same thunk is correct, as above.
+  if (auto existingThunk = M.lookUpFunction(name))
+    return existingThunk;
+
   auto *derivedDecl = cast<AbstractFunctionDecl>(derived.getDecl());
   SILLocation loc(derivedDecl);
   auto thunk =
-      M.getOrCreateFunction(SILLinkage::Private, name, overrideInfo.SILFnType,
-                            derivedDecl->getGenericParams(), loc, IsBare,
-                            IsNotTransparent, IsNotFragile);
+      M.createFunction(SILLinkage::Private,
+                       name, overrideInfo.SILFnType,
+                       derivedDecl->getGenericEnvironment(), loc, IsBare,
+                       IsNotTransparent, IsNotFragile);
   thunk->setDebugScope(new (M) SILDebugScope(loc, thunk));
 
   SILGenFunction(*this, *thunk)
@@ -237,8 +241,9 @@ public:
   }
 
   void visitConstructorDecl(ConstructorDecl *cd) {
-    // Stub constructors don't get an entry.
-    if (cd->hasStubImplementation())
+    // Stub constructors don't get an entry, unless they were synthesized to
+    // override a non-required designated initializer in the superclass.
+    if (cd->hasStubImplementation() && !cd->getOverriddenDecl())
       return;
 
     // Required constructors (or overrides thereof) have their allocating entry
@@ -311,11 +316,6 @@ public:
 
   /// Emit SIL functions for all the members of the type.
   void emitType() {
-    // Force type lowering to lower the type, so that we have a chance to
-    // check for infinite value types even if there are no other references
-    // to this type.
-    SGM.Types.getTypeLowering(theType->getDeclaredTypeInContext());
-
     // Start building a vtable if this is a class.
     if (auto theClass = dyn_cast<ClassDecl>(theType))
       genVTable.emplace(SGM, theClass);
@@ -327,14 +327,9 @@ public:
       visit(member);
     }
 
-    for (Decl *member : theType->getDerivedGlobalDecls()) {
-      SGM.visit(member);
-    }
-
     if (auto protocol = dyn_cast<ProtocolDecl>(theType)) {
-      if (!protocol->hasFixedLayout())
+      if (!protocol->isObjC())
         SGM.emitDefaultWitnessTable(protocol);
-
       return;
     }
 
@@ -384,12 +379,15 @@ public:
   void visitEnumElementDecl(EnumElementDecl *ued) {}
 
   void visitPatternBindingDecl(PatternBindingDecl *pd) {
-    // Emit initializers for static variables.
-    if (!pd->isStatic()) return;
-
-    for (unsigned i = 0, e = pd->getNumPatternEntries(); i != e; ++i)
-      if (pd->getInit(i))
-        SGM.emitGlobalInitialization(pd, i);
+    // Emit initializers.
+    for (unsigned i = 0, e = pd->getNumPatternEntries(); i != e; ++i) {
+      if (pd->getInit(i)) {
+        if (pd->isStatic())
+          SGM.emitGlobalInitialization(pd, i);
+        else
+          SGM.emitStoredPropertyInitialization(pd, i);
+      }
+    }
   }
 
   void visitVarDecl(VarDecl *vd) {
@@ -436,8 +434,6 @@ public:
   void emitExtension(ExtensionDecl *e) {
     for (Decl *member : e->getMembers())
       visit(member);
-    for (Decl *member : e->getDerivedGlobalDecls())
-      SGM.visit(member);
 
     if (!e->getExtendedType()->isExistentialType()) {
       // Emit witness tables for protocol conformances introduced by the
@@ -479,17 +475,19 @@ public:
 
   void visitPatternBindingDecl(PatternBindingDecl *pd) {
     // Emit initializers for static variables.
-    if (!pd->isStatic()) return;
-
-    for (unsigned i = 0, e = pd->getNumPatternEntries(); i != e; ++i)
-      if (pd->getInit(i))
+    for (unsigned i = 0, e = pd->getNumPatternEntries(); i != e; ++i) {
+      if (pd->getInit(i)) {
+        assert(pd->isStatic() && "stored property in extension?!");
         SGM.emitGlobalInitialization(pd, i);
+      }
+    }
   }
 
   void visitVarDecl(VarDecl *vd) {
     if (vd->hasBehavior())
       SGM.emitPropertyBehavior(vd);
-    if (vd->isStatic() && vd->hasStorage()) {
+    if (vd->hasStorage()) {
+      assert(vd->isStatic() && "stored property in extension?!");
       ExtensionDecl *ext = cast<ExtensionDecl>(vd->getDeclContext());
       NominalTypeDecl *theType = ext->getExtendedType()->getAnyNominal();
       return emitTypeMemberGlobalVariable(SGM, ext->getGenericParams(),
@@ -511,54 +509,4 @@ public:
 
 void SILGenModule::visitExtensionDecl(ExtensionDecl *ed) {
   SILGenExtension(*this).emitExtension(ed);
-}
-
-namespace {
-
-/// Emit a default witness table for a resilient protocol definition.
-struct SILGenDefaultWitnessTable
-    : public SILWitnessVisitor<SILGenDefaultWitnessTable> {
-
-  unsigned MinimumWitnessCount;
-  SmallVector<SILDefaultWitnessTable::Entry, 8> DefaultWitnesses;
-
-  SILGenDefaultWitnessTable() : MinimumWitnessCount(0) {}
-
-  void addOutOfLineBaseProtocol(ProtocolDecl *baseProto) {
-    MinimumWitnessCount++;
-  }
-
-  void addMethod(FuncDecl *func) {
-    MinimumWitnessCount++;
-  }
-
-  void addConstructor(ConstructorDecl *ctor) {
-    MinimumWitnessCount++;
-  }
-
-  void addAssociatedType(AssociatedTypeDecl *ty,
-                         ArrayRef<ProtocolDecl *> protos) {
-    MinimumWitnessCount++;
-
-    for (auto *protocol : protos) {
-      // Only reference the witness if the protocol requires it.
-      if (!Lowering::TypeConverter::protocolRequiresWitnessTable(protocol))
-        continue;
-
-      MinimumWitnessCount++;
-    }
-  }
-};
-
-}
-
-void SILGenModule::emitDefaultWitnessTable(ProtocolDecl *protocol) {
-  SILDefaultWitnessTable *defaultWitnesses =
-      M.createDefaultWitnessTableDeclaration(protocol);
-
-  SILGenDefaultWitnessTable builder;
-  builder.visitProtocolDecl(protocol);
-
-  defaultWitnesses->convertToDefinition(builder.MinimumWitnessCount,
-                                        builder.DefaultWitnesses);
 }

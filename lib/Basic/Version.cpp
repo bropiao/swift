@@ -260,36 +260,29 @@ Version Version::getCurrentLanguageVersion() {
   return currentVersion.getValue();
 }
 
-std::string Version::str() const {
-  std::string VersionString;
-  llvm::raw_string_ostream OS(VersionString);
-  for (auto i = Components.begin(); i != Components.end(); i++) {
-    OS << *i;
-    if (i != Components.end() - 1)
-      OS << '.';
-  }
-  return OS.str();
+raw_ostream &operator<<(raw_ostream &os, const Version &version) {
+  if (version.empty())
+    return os;
+  os << version[0];
+  for (size_t i = 1, e = version.size(); i != e; ++i)
+    os << '.' << version[i];
+  return os;
 }
 
-std::string Version::preprocessorDefinition() const {
-  SmallString<64> define("-D__SWIFT_COMPILER_VERSION=");
-  llvm::raw_svector_ostream OS(define);
+std::string
+Version::preprocessorDefinition(StringRef macroName,
+                                ArrayRef<uint64_t> componentWeights) const {
   uint64_t versionConstant = 0;
 
-  auto NumComponents = Components.size();
+  for (size_t i = 0, e = std::min(componentWeights.size(), Components.size());
+       i < e; ++i) {
+    versionConstant += componentWeights[i] * Components[i];
+  }
 
-  if (NumComponents > 0)
-    versionConstant += Components[0] * 1000 * 1000 * 1000;
-  // Component 2 is not used.
-  if (NumComponents > 2)
-    versionConstant += Components[2] * 1000 * 1000;
-  if (NumComponents > 3)
-    versionConstant += Components[3] * 1000;
-  if (NumComponents > 4)
-    versionConstant += Components[4];
-
-  OS << versionConstant;
-  return OS.str().str();
+  std::string define("-D");
+  llvm::raw_string_ostream(define) << macroName << '=' << versionConstant;
+  // This isn't using stream.str() so that we get move semantics.
+  return define;
 }
 
 bool operator>=(const class Version &lhs,
@@ -340,6 +333,10 @@ std::string getSwiftFullVersion() {
   printFullRevisionString(OS);
   OS << ")";
 #endif
+
+  // Suppress unused function warning
+  (void) printFullRevisionString;
+
   return OS.str();
 }
 

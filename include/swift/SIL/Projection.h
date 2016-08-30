@@ -537,6 +537,10 @@ public:
     return *this;
   }
 
+  /// Create a path of AddrProjection or ValueProjection with the given VA
+  /// and Path.
+  SILValue createExtract(SILValue VA, SILInstruction *Inst, bool IsVal) const;
+
   /// Create a new projection path from the SILValue Start to End.  Returns
   /// Nothing::None if there is no such path.
   ///
@@ -560,15 +564,6 @@ public:
   /// NOTE: this function returns a single empty projection path if the BaseType
   /// is a leaf node in the type tree.
   static void expandTypeIntoLeafProjectionPaths(SILType BaseType,
-                                                SILModule *Mod,
-                                                ProjectionPathList &P);
-
-  /// Given the SILType Base, expand every intermediate and leaf nodes in the
-  /// type tree.
-  ///
-  /// NOTE: this function returns a single empty projection path if the BaseType
-  /// is a leaf node in the type tree.
-  static void expandTypeIntoNodeProjectionPaths(SILType BaseType,
                                                 SILModule *Mod,
                                                 ProjectionPathList &P);
 
@@ -724,8 +719,8 @@ class ProjectionTreeNode {
 
   /// Constructor for the root of the tree.
   ProjectionTreeNode(SILType NodeTy)
-    : Index(0), NodeType(NodeTy), Proj(), Parent(),
-      NonProjUsers(), ChildProjections(), Initialized(false), IsLive(false) {}
+    : Index(0), NodeType(NodeTy), Proj(), Parent(), NonProjUsers(),
+      ChildProjections(), Initialized(false), IsLive(false) {}
 
   // Normal constructor for non-root nodes.
   ProjectionTreeNode(ProjectionTreeNode *Parent, unsigned Index, SILType NodeTy,
@@ -745,6 +740,10 @@ public:
   }
 
   llvm::Optional<Projection> &getProjection() { return Proj; }
+
+  llvm::SmallVector<Operand *, 4> getNonProjUsers() const {
+    return NonProjUsers;
+  };
 
   SILType getType() const { return NodeType; }
 
@@ -795,7 +794,6 @@ private:
                            llvm::SmallVectorImpl<ValueNodePair> &Worklist,
                            SILValue Value);
 
-
   void createNextLevelChildren(ProjectionTree &Tree);
 
   void createNextLevelChildrenForStruct(ProjectionTree &Tree, StructDecl *SD);
@@ -808,7 +806,8 @@ class ProjectionTree {
 
   SILModule &Mod;
 
-  llvm::BumpPtrAllocator &Allocator;
+  /// The allocator we use to allocate ProjectionTreeNodes in the tree.
+  llvm::SpecificBumpPtrAllocator<ProjectionTreeNode> Allocator;
 
   // A common pattern is a 3 field struct.
   llvm::SmallVector<ProjectionTreeNode *, 4> ProjectionTreeNodes;
@@ -818,8 +817,10 @@ class ProjectionTree {
 
 public:
   /// Construct a projection tree from BaseTy.
-  ProjectionTree(SILModule &Mod, llvm::BumpPtrAllocator &Allocator,
-                 SILType BaseTy);
+  ProjectionTree(SILModule &Mod, SILType BaseTy);
+  /// Construct an uninitialized projection tree, which can then be
+  /// initialized by initializeWithExistingTree.
+  ProjectionTree(SILModule &Mod) : Mod(Mod) {}
   ~ProjectionTree();
   ProjectionTree(const ProjectionTree &) = delete;
   ProjectionTree(ProjectionTree &&) = default;
@@ -869,6 +870,9 @@ public:
   bool isSingleton() const {
     // If we only have one root node, there is no interesting explosion
     // here. Exit early.
+    //
+    // NOTE: In case of a type unable to be exploded, e.g. enum, we treated it
+    // as a singleton.
     if (ProjectionTreeNodes.size() == 1)
       return true;
 
@@ -891,11 +895,21 @@ public:
     return false;
   }
 
+
   void getLeafTypes(llvm::SmallVectorImpl<SILType> &OutArray) const {
     for (unsigned LeafIndex : LiveLeafIndices) {
       const ProjectionTreeNode *Node = getNode(LeafIndex);
       assert(Node->IsLive && "We are only interested in leafs that are live");
       OutArray.push_back(Node->getType());
+    }
+  }
+
+  void
+  getLeafNodes(llvm::SmallVectorImpl<const ProjectionTreeNode *> &Out) const {
+    for (unsigned LeafIndex : LiveLeafIndices) {
+      const ProjectionTreeNode *Node = getNode(LeafIndex);
+      assert(Node->IsLive && "We are only interested in leafs that are live");
+      Out.push_back(Node);
     }
   }
 
@@ -915,7 +929,7 @@ private:
   void createRoot(SILType BaseTy) {
     assert(ProjectionTreeNodes.empty() &&
            "Should only create root when ProjectionTreeNodes is empty");
-    auto *Node = new (Allocator) ProjectionTreeNode(BaseTy);
+    auto *Node = new (Allocator.Allocate()) ProjectionTreeNode(BaseTy);
     ProjectionTreeNodes.push_back(Node);
   }
 
@@ -923,7 +937,8 @@ private:
                                      SILType BaseTy,
                                      const Projection &P) {
     unsigned Index = ProjectionTreeNodes.size();
-    auto *Node = new (Allocator) ProjectionTreeNode(Parent, Index, BaseTy, P);
+    auto *Node = new (Allocator.Allocate()) ProjectionTreeNode(Parent, Index,
+                                                               BaseTy, P);
     ProjectionTreeNodes.push_back(Node);
     return ProjectionTreeNodes[Index];
   }

@@ -241,8 +241,11 @@ private:
   /// Writes the given pattern, recursively.
   void writePattern(const Pattern *pattern);
 
+  /// Writes a generic parameter list.
+  bool writeGenericParams(const GenericParamList *genericParams);
+
   /// Writes a set of generic requirements.
-  void writeRequirements(ArrayRef<Requirement> requirements);
+  void writeGenericRequirements(ArrayRef<Requirement> requirements);
 
   /// Writes a list of protocol conformances.
   void writeConformances(ArrayRef<ProtocolConformanceRef> conformances,
@@ -258,6 +261,12 @@ private:
   /// \param isClass True if the context could be a class context (class,
   ///        class extension, or protocol).
   void writeMembers(DeclRange members, bool isClass);
+
+  /// Write a default witness table for a protocol.
+  ///
+  /// \param proto The protocol.
+  void writeDefaultWitnessTable(const ProtocolDecl *proto,
+                                const std::array<unsigned, 256> &abbrCodes);
 
   /// Check if a decl is cross-referenced.
   bool isDeclXRef(const Decl *D) const;
@@ -339,7 +348,7 @@ public:
 
   /// Serialize module documentation to the given stream.
   static void writeDocToStream(raw_ostream &os, ModuleOrSourceFile DC,
-                               StringRef GroupInfoPath);
+                               StringRef GroupInfoPath, ASTContext &Ctx);
 
   /// Records the use of the given Type.
   ///
@@ -405,9 +414,10 @@ public:
   void writeConformance(ProtocolConformance *conformance,
                         const std::array<unsigned, 256> &abbrCodes);
 
-  /// Writes a generic parameter list.
-  bool writeGenericParams(const GenericParamList *genericParams,
-                          const std::array<unsigned, 256> &abbrCodes);
+  /// Writes a generic environment.
+  void writeGenericEnvironment(GenericSignature *sig,
+                               GenericEnvironment *env,
+                         const std::array<unsigned, 256> &abbrCodes);
 
 };
 } // end namespace serialization

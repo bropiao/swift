@@ -18,18 +18,24 @@
 #include "swift/Basic/Lazy.h"
 #include "swift/Runtime/Concurrent.h"
 #include "swift/Runtime/Metadata.h"
+#include "swift/Runtime/Mutex.h"
 #include "Private.h"
 
 #if defined(__APPLE__) && defined(__MACH__)
 #include <mach-o/dyld.h>
 #include <mach-o/getsect.h>
-#elif defined(__ELF__)
+#elif defined(__ELF__) || defined(__ANDROID__)
 #include <elf.h>
 #include <link.h>
 #endif
 
+#if defined(_MSC_VER)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
 #include <dlfcn.h>
-#include <mutex>
+#endif
 
 using namespace swift;
 
@@ -41,7 +47,7 @@ static const char *class_getName(const ClassMetadata* type) {
     reinterpret_cast<Class>(const_cast<ClassMetadata*>(type)));
 }
 
-void ProtocolConformanceRecord::dump() const {
+template<> void ProtocolConformanceRecord::dump() const {
   auto symbolName = [&](const void *addr) -> const char * {
     Dl_info info;
     int ok = dladdr(addr, &info);
@@ -59,7 +65,7 @@ void ProtocolConformanceRecord::dump() const {
       printf("%s direct type ",
              kind == TypeMetadataRecordKind::UniqueDirectType
              ? "unique" : "nonunique");
-      if (auto ntd = getDirectType()->getNominalTypeDescriptor()) {
+      if (auto &ntd = getDirectType()->getNominalTypeDescriptor()) {
         printf("%s", ntd->Name.get());
       } else {
         printf("<structural type>");
@@ -96,7 +102,7 @@ void ProtocolConformanceRecord::dump() const {
 /// Take the type reference inside a protocol conformance record and fetch the
 /// canonical metadata pointer for the type it refers to.
 /// Returns nil for universal or generic type references.
-const Metadata *ProtocolConformanceRecord::getCanonicalTypeMetadata()
+template<> const Metadata *ProtocolConformanceRecord::getCanonicalTypeMetadata()
 const {
   switch (getTypeKind()) {
   case TypeMetadataRecordKind::UniqueDirectType:
@@ -127,7 +133,9 @@ const {
   }
 }
 
-const WitnessTable *ProtocolConformanceRecord::getWitnessTable(const Metadata *type)
+template<>
+const WitnessTable *
+ProtocolConformanceRecord::getWitnessTable(const Metadata *type)
 const {
   switch (getConformanceKind()) {
   case ProtocolConformanceReferenceKind::WitnessTable:
@@ -142,7 +150,7 @@ const {
 #define SWIFT_PROTOCOL_CONFORMANCES_SECTION "__swift2_proto"
 #elif defined(__ELF__)
 #define SWIFT_PROTOCOL_CONFORMANCES_SECTION ".swift2_protocol_conformances_start"
-#elif defined(__CYGWIN__)
+#elif defined(__CYGWIN__) || defined(_MSC_VER)
 #define SWIFT_PROTOCOL_CONFORMANCES_SECTION ".sw2prtc"
 #endif
 
@@ -224,18 +232,33 @@ namespace {
 }
 
 // Conformance Cache.
-
+#if defined(__APPLE__) && defined(__MACH__)
 static void _initializeCallbacksToInspectDylib();
+#else
+namespace swift {
+  void _swift_initializeCallbacksToInspectDylib(
+    void (*fnAddImageBlock)(const uint8_t *, size_t),
+    const char *sectionName);
+}
+
+static void _addImageProtocolConformancesBlock(const uint8_t *conformances,
+                                               size_t conformancesSize);
+#endif
 
 struct ConformanceState {
   ConcurrentMap<ConformanceCacheEntry> Cache;
   std::vector<ConformanceSection> SectionsToScan;
-  pthread_mutex_t SectionsToScanLock;
+  Mutex SectionsToScanLock;
   
   ConformanceState() {
     SectionsToScan.reserve(16);
-    pthread_mutex_init(&SectionsToScanLock, nullptr);
+#if defined(__APPLE__) && defined(__MACH__)
     _initializeCallbacksToInspectDylib();
+#else
+    _swift_initializeCallbacksToInspectDylib(
+      _addImageProtocolConformancesBlock,
+      SWIFT_PROTOCOL_CONFORMANCES_SECTION);
+#endif
   }
 
   void cacheSuccess(const void *type, const ProtocolDescriptor *proto,
@@ -273,9 +296,8 @@ static void
 _registerProtocolConformances(ConformanceState &C,
                               const ProtocolConformanceRecord *begin,
                               const ProtocolConformanceRecord *end) {
-  pthread_mutex_lock(&C.SectionsToScanLock);
+  ScopedLock guard(C.SectionsToScanLock);
   C.SectionsToScan.push_back(ConformanceSection{begin, end});
-  pthread_mutex_unlock(&C.SectionsToScanLock);
 }
 
 static void _addImageProtocolConformancesBlock(const uint8_t *conformances,
@@ -294,6 +316,14 @@ static void _addImageProtocolConformancesBlock(const uint8_t *conformances,
   _registerProtocolConformances(Conformances.unsafeGetAlreadyInitialized(),
                                 recordsBegin, recordsEnd);
 }
+
+#if !defined(__APPLE__) || !defined(__MACH__)
+// Common Structure
+struct InspectArgs {
+  void (*fnAddImageBlock)(const uint8_t *, size_t);
+  const char *sectionName;
+};
+#endif
 
 #if defined(__APPLE__) && defined(__MACH__)
 static void _addImageProtocolConformances(const mach_header *mh,
@@ -317,16 +347,33 @@ static void _addImageProtocolConformances(const mach_header *mh,
   
   _addImageProtocolConformancesBlock(conformances, conformancesSize);
 }
-#elif defined(__ELF__)
+
+static void _initializeCallbacksToInspectDylib() {
+  // Install our dyld callback.
+  // Dyld will invoke this on our behalf for all images that have already
+  // been loaded.
+  _dyld_register_func_for_add_image(_addImageProtocolConformances);
+}
+
+#elif defined(__ELF__) || defined(__ANDROID__)
 static int _addImageProtocolConformances(struct dl_phdr_info *info,
-                                          size_t size, void * /*data*/) {
+                                          size_t size, void *data) {
+  // inspectArgs contains addImage*Block function and the section name
+  InspectArgs *inspectArgs = reinterpret_cast<InspectArgs *>(data);
+
   void *handle;
   if (!info->dlpi_name || info->dlpi_name[0] == '\0') {
     handle = dlopen(nullptr, RTLD_LAZY);
   } else
     handle = dlopen(info->dlpi_name, RTLD_LAZY | RTLD_NOLOAD);
+
+  if (!handle) {
+    // Not a shared library.
+    return 0;
+  }
+
   auto conformances = reinterpret_cast<const uint8_t*>(
-      dlsym(handle, SWIFT_PROTOCOL_CONFORMANCES_SECTION));
+      dlsym(handle, inspectArgs->sectionName));
 
   if (!conformances) {
     // if there are no conformances, don't hold this handle open.
@@ -338,56 +385,69 @@ static int _addImageProtocolConformances(struct dl_phdr_info *info,
   auto conformancesSize = *reinterpret_cast<const uint64_t*>(conformances);
   conformances += sizeof(conformancesSize);
 
-  _addImageProtocolConformancesBlock(conformances, conformancesSize);
+  inspectArgs->fnAddImageBlock(conformances, conformancesSize);
 
   dlclose(handle);
   return 0;
 }
-#elif defined(__CYGWIN__)
-static int _addImageProtocolConformances(struct dl_phdr_info *info,
-                                          size_t size, void * /*data*/) {
-  void *handle;
-  if (!info->dlpi_name || info->dlpi_name[0] == '\0') {
-    handle = dlopen(nullptr, RTLD_LAZY);
-  } else
-    handle = dlopen(info->dlpi_name, RTLD_LAZY | RTLD_NOLOAD);
 
-  unsigned long conformancesSize;
-  const uint8_t *conformances =
-    _swift_getSectionDataPE(handle, SWIFT_PROTOCOL_CONFORMANCES_SECTION,
-                           &conformancesSize);
+void swift::_swift_initializeCallbacksToInspectDylib(
+    void (*fnAddImageBlock)(const uint8_t *, size_t),
+    const char *sectionName) {
+  InspectArgs inspectArgs = {fnAddImageBlock, sectionName};
 
-  if (!conformances) {
-    // if there are no conformances, don't hold this handle open.
-    dlclose(handle);
-    return 0;
-  }
-
-  _addImageProtocolConformancesBlock(conformances, conformancesSize);
-
-  dlclose(handle);
-  return 0;
-}
-#endif
-
-static void _initializeCallbacksToInspectDylib() {
-#if defined(__APPLE__) && defined(__MACH__)
-  // Install our dyld callback.
-  // Dyld will invoke this on our behalf for all images that have already
-  // been loaded.
-  _dyld_register_func_for_add_image(_addImageProtocolConformances);
-#elif defined(__ELF__)
   // Search the loaded dls. Unlike the above, this only searches the already
   // loaded ones.
   // FIXME: Find a way to have this continue to happen after.
   // rdar://problem/19045112
-  dl_iterate_phdr(_addImageProtocolConformances, nullptr);
-#elif defined(__CYGWIN__)
-  _swift_dl_iterate_phdr(_addImageProtocolConformances, nullptr);
+  dl_iterate_phdr(_addImageProtocolConformances, &inspectArgs);
+}
+#elif defined(__CYGWIN__) || defined(_MSC_VER)
+static int _addImageProtocolConformances(struct dl_phdr_info *info,
+                                          size_t size, void *data) {
+  InspectArgs *inspectArgs = (InspectArgs *)data;
+  // inspectArgs contains addImage*Block function and the section name
+#if defined(_MSC_VER)
+  HMODULE handle;
+
+  if (!info->dlpi_name || info->dlpi_name[0] == '\0')
+    handle = GetModuleHandle(nullptr);
+  else
+    handle = GetModuleHandle(info->dlpi_name);
+#else
+  void *handle;
+  if (!info->dlpi_name || info->dlpi_name[0] == '\0')
+    handle = dlopen(nullptr, RTLD_LAZY);
+  else
+    handle = dlopen(info->dlpi_name, RTLD_LAZY | RTLD_NOLOAD);
+#endif
+
+  unsigned long conformancesSize;
+  const uint8_t *conformances =
+    _swift_getSectionDataPE(handle, inspectArgs->sectionName,
+                           &conformancesSize);
+
+  if (conformances)
+    inspectArgs->fnAddImageBlock(conformances, conformancesSize);
+
+#if defined(_MSC_VER)
+  FreeLibrary(handle);
+#else
+  dlclose(handle);
+#endif
+  return 0;
+}
+
+void swift::_swift_initializeCallbacksToInspectDylib(
+    void (*fnAddImageBlock)(const uint8_t *, size_t),
+    const char *sectionName) {
+  InspectArgs inspectArgs = {fnAddImageBlock, sectionName};
+
+  _swift_dl_iterate_phdr(_addImageProtocolConformances, &inspectArgs);
+}
 #else
 # error No known mechanism to inspect dynamic libraries on this platform.
 #endif
-}
 
 // This variable is used to signal when a cache was generated and
 // it is correct to avoid a new scan.
@@ -441,7 +501,7 @@ recur_inside_cache_lock:
     // For generic and resilient types, nondependent conformances
     // are keyed by the nominal type descriptor rather than the
     // metadata, so try that.
-    auto *description = type->getNominalTypeDescriptor();
+    auto *description = type->getNominalTypeDescriptor().get();
 
     // Hash and lookup the type-protocol pair in the cache.
     if (auto *Value = C.findCached(description, protocol)) {
@@ -483,7 +543,7 @@ bool isRelatedType(const Metadata *type, const void *candidate,
 
     // If the type is resilient or generic, see if there's a witness table
     // keyed off the nominal type descriptor.
-    auto *description = type->getNominalTypeDescriptor();
+    auto *description = type->getNominalTypeDescriptor().get();
     if (description == candidate && !candidateIsMetadata)
       return true;
 
@@ -524,10 +584,9 @@ recur:
       return FoundConformance.first;
   }
 
-  unsigned failedGeneration = ConformanceCacheGeneration;
-
   // If we didn't have an up-to-date cache entry, scan the conformance records.
-  pthread_mutex_lock(&C.SectionsToScanLock);
+  C.SectionsToScanLock.lock();
+  unsigned failedGeneration = ConformanceCacheGeneration;
 
   // If we have no new information to pull in (and nobody else pulled in
   // new information while we waited on the lock), we're done.
@@ -535,7 +594,7 @@ recur:
     if (failedGeneration != ConformanceCacheGeneration) {
       // Someone else pulled in new conformances while we were waiting.
       // Start over with our newly-populated cache.
-      pthread_mutex_unlock(&C.SectionsToScanLock);
+      C.SectionsToScanLock.unlock();
       type = origType;
       goto recur;
     }
@@ -544,7 +603,7 @@ recur:
     // Save the failure for this type-protocol pair in the cache.
     C.cacheFailure(type, protocol);
 
-    pthread_mutex_unlock(&C.SectionsToScanLock);
+    C.SectionsToScanLock.unlock();
     return nullptr;
   }
 
@@ -605,7 +664,7 @@ recur:
   }
   ++ConformanceCacheGeneration;
 
-  pthread_mutex_unlock(&C.SectionsToScanLock);
+  C.SectionsToScanLock.unlock();
   // Start over with our newly-populated cache.
   type = origType;
   goto recur;
@@ -616,7 +675,7 @@ swift::_searchConformancesByMangledTypeName(const llvm::StringRef typeName) {
   auto &C = Conformances.get();
   const Metadata *foundMetadata = nullptr;
 
-  pthread_mutex_lock(&C.SectionsToScanLock);
+  ScopedLock guard(C.SectionsToScanLock);
 
   unsigned sectionIdx = 0;
   unsigned endSectionIdx = C.SectionsToScan.size();
@@ -635,8 +694,6 @@ swift::_searchConformancesByMangledTypeName(const llvm::StringRef typeName) {
     if (foundMetadata != nullptr)
       break;
   }
-
-  pthread_mutex_unlock(&C.SectionsToScanLock);
 
   return foundMetadata;
 }

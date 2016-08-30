@@ -16,48 +16,129 @@
 #include "swift/Basic/STLExtras.h"
 #include "swift/AST/AttrKind.h"
 #include "swift/AST/Identifier.h"
+#include <limits.h>
 #include <vector>
 
 namespace swift {
-class GenericParamList;
+class GenericEnvironment;
 class CanType;
+class Decl;
+class ValueDecl;
 class ExtensionDecl;
 class NominalTypeDecl;
 class TypeBase;
 class DeclContext;
 class Type;
+class ModuleDecl;
 enum DeclAttrKind : unsigned;
-class PrinterArchetypeTransformer;
+class PrinterTypeTransformer;
+class SynthesizedExtensionAnalyzer;
+struct PrintOptions;
 
 /// Necessary information for archetype transformation during printing.
-struct ArchetypeTransformContext {
+struct TypeTransformContext {
   Type getTypeBase();
   NominalTypeDecl *getNominal();
-  PrinterArchetypeTransformer *getTransformer() { return Transformer.get(); }
+  PrinterTypeTransformer *getTransformer();
   bool isPrintingSynthesizedExtension();
   bool isPrintingTypeInterface();
-  ArchetypeTransformContext(PrinterArchetypeTransformer *Transformer);
-  ArchetypeTransformContext(PrinterArchetypeTransformer *Transformer,
+  TypeTransformContext(PrinterTypeTransformer *Transformer);
+  TypeTransformContext(PrinterTypeTransformer *Transformer,
                             Type T);
-  ArchetypeTransformContext(PrinterArchetypeTransformer *Transformer,
-                            NominalTypeDecl *NTD);
+  TypeTransformContext(PrinterTypeTransformer *Transformer,
+                            NominalTypeDecl *NTD,
+                            SynthesizedExtensionAnalyzer *Analyzer);
   Type transform(Type Input);
   StringRef transform(StringRef Input);
-private:
-  std::shared_ptr<PrinterArchetypeTransformer> Transformer;
 
-  // When printing a type interface, this is the type to print.
-  // When synthesizing extensions, this is the target nominal.
-  llvm::PointerUnion<TypeBase*, NominalTypeDecl*> TypeBaseOrNominal;
+  bool shouldPrintRequirement(ExtensionDecl *ED, StringRef Req);
+
+  ~TypeTransformContext();
+private:
+  struct Implementation;
+  Implementation &Impl;
 };
+
+typedef std::pair<ExtensionDecl*, bool> ExtensionAndIsSynthesized;
+typedef llvm::function_ref<void(ArrayRef<ExtensionAndIsSynthesized>)>
+  ExtensionGroupOperation;
 
 class SynthesizedExtensionAnalyzer {
   struct Implementation;
   Implementation &Impl;
 public:
-  SynthesizedExtensionAnalyzer(ExtensionDecl *Ext, NominalTypeDecl *Target);
+  SynthesizedExtensionAnalyzer(NominalTypeDecl *Target,
+                               PrintOptions Options,
+                               bool IncludeUnconditional = true);
   ~SynthesizedExtensionAnalyzer();
-  bool isApplicable();
+
+  enum class MergeGroupKind : char {
+    All,
+    MergeableWithTypeDef,
+    UnmergeableWithTypeDef,
+  };
+
+  void forEachExtensionMergeGroup(MergeGroupKind Kind,
+                                  ExtensionGroupOperation Fn);
+  bool isInSynthesizedExtension(const ValueDecl *VD);
+  bool shouldPrintRequirement(ExtensionDecl *ED, StringRef Req);
+  bool hasMergeGroup(MergeGroupKind Kind);
+};
+
+class BracketOptions {
+  Decl* Target;
+  bool OpenExtension;
+  bool CloseExtension;
+  bool CloseNominal;
+
+public:
+  BracketOptions(Decl *Target = nullptr, bool OpenExtension = true,
+                 bool CloseExtension = true, bool CloseNominal = true) :
+                  Target(Target), OpenExtension(OpenExtension),
+                  CloseExtension(CloseExtension),
+                  CloseNominal(CloseNominal) {}
+
+  bool shouldOpenExtension(const Decl *D) {
+    return D != Target || OpenExtension;
+  }
+
+  bool shouldCloseExtension(const Decl *D) {
+    return D != Target || CloseExtension;
+  }
+
+  bool shouldCloseNominal(const Decl *D) {
+    return D != Target || CloseNominal;
+  }
+};
+
+/// A union of DeclAttrKind and TypeAttrKind.
+class AnyAttrKind {
+  unsigned kind : 31;
+  unsigned isType : 1;
+
+public:
+  AnyAttrKind(TypeAttrKind K) : kind(static_cast<unsigned>(K)), isType(1) {
+    static_assert(TAK_Count < UINT_MAX, "TypeAttrKind is > 31 bits");
+  }
+  AnyAttrKind(DeclAttrKind K) : kind(static_cast<unsigned>(K)), isType(0) {
+    static_assert(DAK_Count < UINT_MAX, "DeclAttrKind is > 31 bits");
+  }
+  AnyAttrKind() : kind(TAK_Count), isType(1) {}
+  AnyAttrKind(const AnyAttrKind &) = default;
+
+  /// Returns the TypeAttrKind, or TAK_Count if this is not a type attribute.
+  TypeAttrKind type() const {
+    return isType ? static_cast<TypeAttrKind>(kind) : TAK_Count;
+  }
+  /// Returns the DeclAttrKind, or DAK_Count if this is not a decl attribute.
+  DeclAttrKind decl() const {
+    return isType ? DAK_Count : static_cast<DeclAttrKind>(kind);
+  }
+
+  bool operator==(AnyAttrKind K) const {
+    return kind == K.kind && isType == K.isType;
+  }
+  bool operator!=(AnyAttrKind K) const { return !(*this == K); }
 };
 
 /// Options for printing AST nodes.
@@ -92,6 +173,9 @@ struct PrintOptions {
 
   /// \brief Whether to print a placeholder for default parameters.
   bool PrintDefaultParameterPlaceholder = true;
+
+  /// \brief Whether to print enum raw value expressions.
+  bool EnumRawValues = false;
 
   /// \brief Whether to prefer printing TypeReprs instead of Types,
   /// if a TypeRepr is available.  This allows us to print the original
@@ -139,6 +223,7 @@ struct PrintOptions {
   bool SkipPrivateStdlibDecls = false;
 
   /// Whether to skip underscored stdlib protocols.
+  /// Protocols marked with @_show_in_interface are still printed.
   bool SkipUnderscoredStdlibProtocols = false;
 
   /// Whether to skip extensions that don't add protocols or no members.
@@ -171,12 +256,12 @@ struct PrintOptions {
   bool PrintUserInaccessibleAttrs = true;
 
   /// List of attribute kinds that should not be printed.
-  std::vector<DeclAttrKind> ExcludeAttrList =
+  std::vector<AnyAttrKind> ExcludeAttrList =
       { DAK_Transparent, DAK_Effects, DAK_FixedLayout };
 
   /// List of attribute kinds that should be printed exclusively.
   /// Empty means allow all.
-  std::vector<DeclAttrKind> ExclusiveAttrList;
+  std::vector<AnyAttrKind> ExclusiveAttrList;
 
   /// Whether to print function @convention attribute on function types.
   bool PrintFunctionRepresentationAttrs = true;
@@ -207,14 +292,27 @@ struct PrintOptions {
   /// Whether we are printing part of SIL body.
   bool PrintInSILBody = false;
 
+  /// Whether to print the types as if they appear as function parameters. This
+  /// governs whether we print a function type with an explicit @escaping. This
+  /// is also set and restored internally when visiting a type in a parameter
+  /// position.
+  bool PrintAsInParamType = false;
+
   /// Whether to use an empty line to separate two members in a single decl.
   bool EmptyLineBetweenMembers = false;
+
+  /// Whether to print the extensions from conforming protocols.
+  bool PrintExtensionFromConformingProtocols = false;
 
   enum class ArgAndParamPrintingMode {
     ArgumentOnly,
     MatchSource,
     BothAlways,
   };
+
+  /// Whether to print the doc-comment from the conformance if a member decl
+  /// has no associated doc-comment by itself.
+  bool ElevateDocCommentFromConformance = false;
 
   /// Whether to print the content of an extension decl inside the type decl where it
   /// extends from.
@@ -238,15 +336,35 @@ struct PrintOptions {
   /// formatting.
   bool PrintOriginalSourceText = false;
 
-  /// \brief Print dependent types as references into this generic parameter
-  /// list.
-  GenericParamList *ContextGenericParams = nullptr;
-  
+  /// \brief Print dependent types as references into this generic environment.
+  GenericEnvironment *GenericEnv = nullptr;
+
   /// \brief Print types with alternative names from their canonical names.
   llvm::DenseMap<CanType, Identifier> *AlternativeTypeNames = nullptr;
 
+  /// \brief The module in which the printer is used. Determines if the module
+  /// name should be printed when printing a type.
+  ModuleDecl *CurrentModule = nullptr;
+
   /// \brief The information for converting archetypes to specialized types.
-  std::shared_ptr<ArchetypeTransformContext> TransformContext;
+  std::shared_ptr<TypeTransformContext> TransformContext;
+
+  /// \brief If this is not \c nullptr then functions (including accessors and
+  /// constructors) will be printed with a body that is determined by this
+  /// function.
+  std::function<std::string(const ValueDecl *)> FunctionBody;
+
+  BracketOptions BracketOptions;
+
+  bool excludeAttrKind(AnyAttrKind K) const {
+    if (std::any_of(ExcludeAttrList.begin(), ExcludeAttrList.end(),
+                    [K](AnyAttrKind other) { return other == K; }))
+      return true;
+    if (!ExclusiveAttrList.empty())
+      return std::none_of(ExclusiveAttrList.begin(), ExclusiveAttrList.end(),
+                          [K](AnyAttrKind other) { return other == K; });
+    return false;
+  }
 
   /// Retrieve the set of options for verbose printing to users.
   static PrintOptions printVerbose() {
@@ -272,7 +390,6 @@ struct PrintOptions {
     result.ExcludeAttrList.push_back(DAK_Exported);
     result.ExcludeAttrList.push_back(DAK_Inline);
     result.ExcludeAttrList.push_back(DAK_Rethrows);
-    result.ExcludeAttrList.push_back(DAK_Swift3Migration);
     result.PrintOverrideKeyword = false;
     result.AccessibilityFilter = Accessibility::Public;
     result.PrintIfConfig = false;
@@ -285,17 +402,24 @@ struct PrintOptions {
     result.SkipUnavailable = true;
     result.SkipImplicit = true;
     result.SkipPrivateStdlibDecls = true;
+    result.SkipUnderscoredStdlibProtocols = true;
     result.SkipDeinit = true;
+    result.ExcludeAttrList.push_back(DAK_DiscardableResult);
+    result.EmptyLineBetweenMembers = true;
+    result.ElevateDocCommentFromConformance = true;
     return result;
   }
 
-  static PrintOptions printTypeInterface(Type T, const DeclContext *DC);
+  static PrintOptions printTypeInterface(Type T, DeclContext *DC);
 
-  void setArchetypeTransform(Type T, const DeclContext *DC);
+  void setArchetypeSelfTransform(Type T, DeclContext *DC);
 
-  void setArchetypeTransformForQuickHelp(Type T, DeclContext *DC);
+  void setArchetypeSelfTransformForQuickHelp(Type T, DeclContext *DC);
 
-  void initArchetypeTransformerForSynthesizedExtensions(NominalTypeDecl *D);
+  void setArchetypeAndDynamicSelfTransform(Type T, DeclContext *DC);
+
+  void initArchetypeTransformerForSynthesizedExtensions(NominalTypeDecl *D,
+                                    SynthesizedExtensionAnalyzer *SynAnalyzer);
 
   void clearArchetypeTransformerForSynthesizedExtensions();
 
@@ -322,7 +446,6 @@ struct PrintOptions {
     result.PrintAccessibility = false;
     result.SkipUnavailable = false;
     result.ExcludeAttrList.push_back(DAK_Available);
-    result.ExcludeAttrList.push_back(DAK_Swift3Migration);
     result.ArgAndParamPrinting =
       PrintOptions::ArgAndParamPrintingMode::BothAlways;
     result.PrintDocumentationComments = false;
@@ -340,6 +463,7 @@ struct PrintOptions {
     result.AbstractAccessors = false;
     result.PrintForSIL = true;
     result.PrintInSILBody = true;
+    result.PreferTypeRepr = false;
     return result;
   }
 
@@ -360,12 +484,12 @@ struct PrintOptions {
   /// Print in the style of quick help declaration.
   static PrintOptions printQuickHelpDeclaration() {
     PrintOptions PO;
+    PO.EnumRawValues = true;
     PO.PrintDefaultParameterPlaceholder = true;
     PO.PrintImplicitAttrs = false;
     PO.PrintFunctionRepresentationAttrs = false;
     PO.PrintDocumentationComments = false;
     PO.ExcludeAttrList.push_back(DAK_Available);
-    PO.ExcludeAttrList.push_back(DAK_Swift3Migration);
     PO.SkipPrivateStdlibDecls = true;
     PO.ExplodeEnumCaseDecls = true;
     return PO;

@@ -1,11 +1,11 @@
-// RUN: %target-swift-frontend %s -emit-silgen | FileCheck %s
+// RUN: %target-swift-frontend %s -emit-silgen | %FileCheck %s
 
 // rdar://16238241
 // Make sure we can parse where clause with conformance & same-type requirements.
 
 protocol Runcible {
-  typealias Mince
-  typealias Quince
+  associatedtype Mince
+  associatedtype Quince
 }
 
 struct Spoon<T: Runcible> {}

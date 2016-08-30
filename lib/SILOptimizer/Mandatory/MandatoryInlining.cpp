@@ -14,6 +14,7 @@
 #include "swift/SILOptimizer/PassManager/Passes.h"
 #include "swift/AST/DiagnosticEngine.h"
 #include "swift/AST/DiagnosticsSIL.h"
+#include "swift/AST/GenericEnvironment.h"
 #include "swift/SILOptimizer/Utils/Devirtualize.h"
 #include "swift/SILOptimizer/Utils/Local.h"
 #include "swift/SILOptimizer/Utils/SILInliner.h"
@@ -36,6 +37,44 @@ static void diagnose(ASTContext &Context, SourceLoc loc, Diag<T...> diag,
                      U &&...args) {
   Context.Diags.diagnose(loc, diag, std::forward<U>(args)...);
 }
+
+namespace {
+
+/// A helper class to update an instruction iterator if
+/// removal of instructions would invalidate it.
+class DeleteInstructionsHandler : public DeleteNotificationHandler {
+  SILBasicBlock::iterator &CurrentI;
+  SILModule &Module;
+
+public:
+  DeleteInstructionsHandler(SILBasicBlock::iterator &I)
+      : CurrentI(I), Module(I->getModule()) {
+    Module.registerDeleteNotificationHandler(this);
+  }
+
+  ~DeleteInstructionsHandler() {
+     // Unregister the handler.
+    Module.removeDeleteNotificationHandler(this);
+  }
+
+  // Handling of instruction removal notifications.
+  bool needsNotifications() { return true; }
+
+  // Handle notifications about removals of instructions.
+  void handleDeleteNotification(swift::ValueBase *Value) {
+    if (auto DeletedI = dyn_cast<SILInstruction>(Value)) {
+      if (CurrentI == SILBasicBlock::iterator(DeletedI)) {
+        if (CurrentI != CurrentI->getParent()->begin()) {
+          --CurrentI;
+        } else {
+          ++CurrentI;
+        }
+      }
+    }
+  }
+};
+
+} // end of namespace
 
 /// \brief Fixup reference counts after inlining a function call (which is a
 /// no-op unless the function is a thick function). Note that this function
@@ -199,7 +238,7 @@ getCalleeFunction(FullApplySite AI, bool &IsThick,
       // If we find the load instruction first, then the load is loading from
       // a non-initialized alloc; this shouldn't really happen but I'm not
       // making any assumptions
-      if (static_cast<SILInstruction*>(I) == LI)
+      if (&*I == LI)
         return nullptr;
       if ((SI = dyn_cast<StoreInst>(I)) && SI->getDest() == PBI) {
         // We found a store that we know dominates the load; now ensure there
@@ -305,6 +344,7 @@ runOnFunctionRecursively(SILFunction *F, FullApplySite AI,
 
   SmallVector<SILValue, 16> CaptureArgs;
   SmallVector<SILValue, 32> FullArgs;
+
   for (auto FI = F->begin(), FE = F->end(); FI != FE; ++FI) {
     for (auto I = FI->begin(), E = FI->end(); I != E; ++I) {
       FullApplySite InnerAI = FullApplySite::isa(&*I);
@@ -339,6 +379,17 @@ runOnFunctionRecursively(SILFunction *F, FullApplySite AI,
       if (!CalleeFunction ||
           CalleeFunction->isTransparent() == IsNotTransparent)
         continue;
+
+      if (F->isFragile() &&
+          !CalleeFunction->hasValidLinkageForFragileRef()) {
+        if (!CalleeFunction->hasValidLinkageForFragileInline()) {
+          llvm::errs() << "caller: " << F->getName() << "\n";
+          llvm::errs() << "callee: " << CalleeFunction->getName() << "\n";
+          llvm_unreachable("Should never be inlining a resilient function into "
+                           "a fragile function");
+        }
+        continue;
+      }
 
       // Then recursively process it first before trying to inline it.
       if (!runOnFunctionRecursively(CalleeFunction, InnerAI, Mode,
@@ -376,6 +427,8 @@ runOnFunctionRecursively(SILFunction *F, FullApplySite AI,
         I = ApplyBlock->end();
 
       TypeSubstitutionMap ContextSubs;
+      ArchetypeConformanceMap ConformanceMap;
+
       std::vector<Substitution> ApplySubs(InnerAI.getSubstitutions());
 
       if (PAI) {
@@ -383,12 +436,24 @@ runOnFunctionRecursively(SILFunction *F, FullApplySite AI,
         ApplySubs.insert(ApplySubs.end(), PAISubs.begin(), PAISubs.end());
       }
 
-      ContextSubs.copyFrom(CalleeFunction->getContextGenericParams()
-                                         ->getSubstitutionMap(ApplySubs));
+      if (auto *params = CalleeFunction->getGenericEnvironment()) {
+        auto sig = CalleeFunction->getLoweredFunctionType()
+            ->getGenericSignature();
+        params->getSubstitutionMap(F->getModule().getSwiftModule(),
+                                   sig, ApplySubs,
+                                   ContextSubs, ConformanceMap);
+      }
+
+      SILOpenedArchetypesTracker OpenedArchetypesTracker(*F);
+      F->getModule().registerDeleteNotificationHandler(
+          &OpenedArchetypesTracker);
+      // The callee only needs to know about opened archetypes used in
+      // the substitution list.
+      OpenedArchetypesTracker.registerUsedOpenedArchetypes(InnerAI.getInstruction());
 
       SILInliner Inliner(*F, *CalleeFunction,
-                         SILInliner::InlineKind::MandatoryInline,
-                         ContextSubs, ApplySubs);
+                         SILInliner::InlineKind::MandatoryInline, ContextSubs,
+                         ApplySubs, OpenedArchetypesTracker);
       if (!Inliner.inlineFunction(InnerAI, FullArgs)) {
         I = InnerAI.getInstruction()->getIterator();
         continue;
@@ -400,8 +465,9 @@ runOnFunctionRecursively(SILFunction *F, FullApplySite AI,
       // Reestablish our iterator if it wrapped.
       if (I == ApplyBlock->end())
         I = ApplyBlock->begin();
-      else
-        ++I;
+
+      // Update the iterator when instructions are removed.
+      DeleteInstructionsHandler DeletionHandler(I);
 
       // If the inlined apply was a thick function, then we need to balance the
       // reference counts for correctness.
@@ -414,8 +480,9 @@ runOnFunctionRecursively(SILFunction *F, FullApplySite AI,
 
       // Reposition iterators possibly invalidated by mutation.
       FI = SILFunction::iterator(ApplyBlock);
-      I = ApplyBlock->begin();
       E = ApplyBlock->end();
+      assert(FI == SILFunction::iterator(I->getParent()) &&
+             "Mismatch between the instruction and basic block");
       ++NumMandatoryInlines;
     }
   }
@@ -453,6 +520,15 @@ class MandatoryInlining : public SILModuleTransform {
                                SetFactory, SetFactory.getEmptySet(), CHA);
     }
 
+    // Make sure that we de-serialize all transparent functions,
+    // even if we didn't inline them for some reason.
+    // Transparent functions are not available externally, so we
+    // have to generate code for them.
+    for (auto &F : *M) {
+      if (F.isTransparent())
+        M->linkFunction(&F, Mode);
+    }
+    
     if (!ShouldCleanup)
       return;
 

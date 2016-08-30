@@ -13,10 +13,10 @@
 *~
 # Merge files created by git.
 *.orig
-# Byte compiled python modules.
+# Byte compiled Python modules.
 *.pyc
 # vim swap files
-.*.swp
+.*.sw[a-z]
 .sw?
 
 #==============================================================================#
@@ -39,3 +39,4 @@ docs/_build
 #==============================================================================#
 CMakeCache.txt
 CMakeFiles
+.atom-build.json

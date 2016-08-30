@@ -76,8 +76,8 @@
 #include "swift/SIL/Projection.h"
 #include "swift/SIL/SILArgument.h"
 #include "swift/SIL/SILBuilder.h"
-#include "swift/SIL/SILValueProjection.h"
 #include "swift/SILOptimizer/Analysis/AliasAnalysis.h"
+#include "swift/SILOptimizer/Analysis/ARCAnalysis.h"
 #include "swift/SILOptimizer/Analysis/DominanceAnalysis.h"
 #include "swift/SILOptimizer/Analysis/PostOrderAnalysis.h"
 #include "swift/SILOptimizer/Analysis/ValueTracking.h"
@@ -85,6 +85,7 @@
 #include "swift/SILOptimizer/PassManager/Transforms.h"
 #include "swift/SILOptimizer/Utils/CFG.h"
 #include "swift/SILOptimizer/Utils/Local.h"
+#include "swift/SILOptimizer/Utils/LoadStoreOptUtils.h"
 #include "swift/SILOptimizer/Utils/SILSSAUpdater.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/MapVector.h"
@@ -178,7 +179,7 @@ namespace {
 constexpr unsigned MaxLSLocationBBMultiplicationNone = 128*128;
 
 /// we could run optimistic RLE on functions with less than 64 basic blocks
-/// and 64 locations which is a sizeable function.
+/// and 64 locations which is a sizable function.
 constexpr unsigned MaxLSLocationBBMultiplicationPessimistic = 64*64;
 
 /// forward declaration.
@@ -439,6 +440,9 @@ private:
   /// order of the given function.
   PostOrderFunctionInfo *PO;
 
+  /// The epilogue release matcher we are using.
+  ConsumedArgToEpilogueReleaseMatcher& ERM;
+
   /// Keeps all the locations for the current function. The BitVector in each
   /// BlockState is then laid on top of it to keep track of which LSLocation
   /// has a downward available value.
@@ -475,7 +479,8 @@ private:
 
 public:
   RLEContext(SILFunction *F, SILPassManager *PM, AliasAnalysis *AA,
-             TypeExpansionAnalysis *TE, PostOrderFunctionInfo *PO);
+             TypeExpansionAnalysis *TE, PostOrderFunctionInfo *PO,
+             ConsumedArgToEpilogueReleaseMatcher &ERM);
 
   RLEContext(const RLEContext &) = delete;
   RLEContext(RLEContext &&) = default;
@@ -483,6 +488,8 @@ public:
 
   /// Entry point to redundant load elimination.
   bool run();
+
+  ConsumedArgToEpilogueReleaseMatcher &getERM() const { return ERM; };
 
   /// Use a set of ad hoc rules to tell whether we should run a pessimistic
   /// one iteration data flow on the function.
@@ -654,7 +661,7 @@ SILValue BlockState::reduceValuesAtEndOfBlock(RLEContext &Ctx, LSLocation &L) {
   // forward.
   SILValue TheForwardingValue;
   TheForwardingValue = LSValue::reduce(L, &BB->getModule(), Values,
-                                       BB->getTerminator(), Ctx.getTE());
+                                       BB->getTerminator());
   /// Return the forwarding value.
   return TheForwardingValue;
 }
@@ -679,7 +686,7 @@ bool BlockState::setupRLE(RLEContext &Ctx, SILInstruction *I, SILValue Mem) {
 
   // Reduce the available values into a single SILValue we can use to forward.
   SILModule *Mod = &I->getModule();
-  SILValue TheForwardingValue = LSValue::reduce(L, Mod, Values, I, Ctx.getTE());
+  SILValue TheForwardingValue = LSValue::reduce(L, Mod, Values, I);
   if (!TheForwardingValue)
     return false;
 
@@ -804,7 +811,7 @@ void BlockState::processWrite(RLEContext &Ctx, SILInstruction *I, SILValue Mem,
     L = LSLocation(UO, ProjectionPath::getProjectionPath(UO, Mem));
   }
 
-  // If we cant figure out the Base or Projection Path for the write,
+  // If we can't figure out the Base or Projection Path for the write,
   // process it as an unknown memory instruction.
   if (!L.isValid()) {
     // we can ignore unknown store instructions if we are computing the
@@ -861,7 +868,7 @@ void BlockState::processRead(RLEContext &Ctx, SILInstruction *I, SILValue Mem,
     L = LSLocation(UO, ProjectionPath::getProjectionPath(UO, Mem));
   }
 
-  // If we cant figure out the Base or Projection Path for the read, simply
+  // If we can't figure out the Base or Projection Path for the read, simply
   // ignore it for now.
   if (!L.isValid())
     return;
@@ -961,7 +968,7 @@ void BlockState::processUnknownWriteInst(RLEContext &Ctx, SILInstruction *I,
                                          RLEKind Kind) {
   // If this is a release on a guaranteed parameter, it can not call deinit,
   // which might read or write memory.
-  if (isGuaranteedParamRelease(I))
+  if (isIntermediateRelease(I, Ctx.getERM()))
     return;
 
   // Are we computing the genset and killset ?
@@ -1118,8 +1125,9 @@ getProcessFunctionKind(unsigned LoadCount, unsigned StoreCount) {
 //===----------------------------------------------------------------------===//
 
 RLEContext::RLEContext(SILFunction *F, SILPassManager *PM, AliasAnalysis *AA,
-                       TypeExpansionAnalysis *TE, PostOrderFunctionInfo *PO)
-    : Fn(F), PM(PM), AA(AA), TE(TE), PO(PO) {
+                       TypeExpansionAnalysis *TE, PostOrderFunctionInfo *PO,
+                       ConsumedArgToEpilogueReleaseMatcher &ERM)
+    : Fn(F), PM(PM), AA(AA), TE(TE), PO(PO), ERM(ERM) {
 }
 
 LSLocation &RLEContext::getLocation(const unsigned index) {
@@ -1238,7 +1246,7 @@ SILValue RLEContext::computePredecessorLocationValue(SILBasicBlock *BB,
 
     // Reduce the available values into a single SILValue we can use to forward
     SILInstruction *IPt = CurBB->getTerminator();
-    Values[CurBB] = LSValue::reduce(L, &BB->getModule(), LSValues, IPt, TE);
+    Values[CurBB] = LSValue::reduce(L, &BB->getModule(), LSValues, IPt);
   }
 
   // Finally, collect all the values for the SILArgument, materialize it using
@@ -1271,7 +1279,7 @@ bool RLEContext::collectLocationValues(SILBasicBlock *BB, LSLocation &L,
   // For locations which we do not have concrete values for in this basic
   // block, try to reduce it to the minimum # of locations possible, this
   // will help us to generate as few SILArguments as possible.
-  LSLocation::reduce(L, Mod, CSLocs, TE);
+  LSLocation::reduce(L, Mod, CSLocs);
 
   // To handle covering value, we need to go to the predecessors and
   // materialize them there.
@@ -1479,13 +1487,26 @@ bool RLEContext::run() {
   // Finally, perform the redundant load replacements.
   llvm::DenseSet<SILInstruction *> InstsToDelete;
   bool SILChanged = false;
-  for (auto &X : BBToLocState) {
-    for (auto &F : X.second.getRL()) {
-      DEBUG(llvm::dbgs() << "Replacing  " << SILValue(F.first) << "With "
-                         << F.second);
+  for (auto &B : *Fn) {
+    auto &State = BBToLocState[&B];
+    auto &Loads = State.getRL();
+    // Nothing to forward.
+    if (Loads.empty())
+      continue;
+    // We iterate the instructions in the basic block in a deterministic order
+    // and use this order to perform the load forwarding. 
+    //
+    // NOTE: we could end up with different SIL depending on the ordering load
+    // forwarding is performed.
+    for (auto I = B.rbegin(), E = B.rend(); I != E; ++I) {
+      auto Iter = Loads.find(&*I);
+      if (Iter == Loads.end())
+        continue;
+      DEBUG(llvm::dbgs() << "Replacing  " << SILValue(Iter->first) << "With "
+            << Iter->second);
       SILChanged = true;
-      F.first->replaceAllUsesWith(F.second);
-      InstsToDelete.insert(F.first);
+      Iter->first->replaceAllUsesWith(Iter->second);
+      InstsToDelete.insert(Iter->first);
       ++NumForwardedLoads;
     }
   }
@@ -1522,8 +1543,11 @@ class RedundantLoadElimination : public SILFunctionTransform {
     auto *AA = PM->getAnalysis<AliasAnalysis>();
     auto *TE = PM->getAnalysis<TypeExpansionAnalysis>();
     auto *PO = PM->getAnalysis<PostOrderAnalysis>()->get(F);
+    auto *RCFI = PM->getAnalysis<RCIdentityAnalysis>()->get(F);
 
-    RLEContext RLE(F, PM, AA, TE, PO);
+    ConsumedArgToEpilogueReleaseMatcher ERM(RCFI, F);
+
+    RLEContext RLE(F, PM, AA, TE, PO, ERM);
     if (RLE.run()) {
       invalidateAnalysis(SILAnalysis::InvalidationKind::Instructions);
     }

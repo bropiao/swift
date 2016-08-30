@@ -366,32 +366,18 @@ struct SILConstantInfo {
   /// The SIL function type of the constant.
   CanSILFunctionType SILFnType;
   
-  /// The context generic parameters used by the constant.
-  /// This will be the innermost generic parameter list that applies to the
-  /// constant, which may be the generic parameter list of an enclosing context.
-  GenericParamList *ContextGenericParams;
+  /// The generic environment used by the constant.
+  GenericEnvironment *GenericEnv;
   
-  /// The generic parameter list of the function.
-  /// If the function does not have any generic parameters of its own, this
-  /// will be null.
-  GenericParamList *InnerGenericParams;
-
   SILType getSILType() const {
     return SILType::getPrimitiveObjectType(SILFnType);
-  }
-
-  ArrayRef<Substitution> getForwardingSubstitutions(ASTContext &C) {
-    if (!ContextGenericParams)
-      return { };
-    return ContextGenericParams->getForwardingSubstitutions(C);
   }
 
   friend bool operator==(SILConstantInfo lhs, SILConstantInfo rhs) {
     return lhs.FormalInterfaceType == rhs.FormalInterfaceType &&
            lhs.LoweredInterfaceType == rhs.LoweredInterfaceType &&
            lhs.SILFnType == rhs.SILFnType &&
-           lhs.ContextGenericParams == rhs.ContextGenericParams &&
-           lhs.InnerGenericParams == rhs.InnerGenericParams;
+           lhs.GenericEnv == rhs.GenericEnv;
   }
   friend bool operator!=(SILConstantInfo lhs, SILConstantInfo rhs) {
     return !(lhs == rhs);
@@ -527,17 +513,13 @@ class TypeConverter {
   
   CanAnyFunctionType makeConstantInterfaceType(SILDeclRef constant);
   
-  /// Get the context parameters for a constant. Returns a pair of the innermost
-  /// generic parameter list and the generic param list that directly applies
-  /// to the constant, if any.
-  std::pair<GenericParamList *, GenericParamList*>
-  getConstantContextGenericParams(SILDeclRef constant);
+  /// Get the generic environment for a constant.
+  GenericEnvironment *getConstantGenericEnvironment(SILDeclRef constant);
   
   // Types converted during foreign bridging.
 #define BRIDGING_KNOWN_TYPE(BridgedModule,BridgedType) \
   Optional<CanType> BridgedType##Ty;
 #include "swift/SIL/BridgedTypes.def"
-  Optional<CanType> BridgedTypeErrorType;
 
   const TypeLowering &getTypeLoweringForLoweredType(TypeKey key);
   const TypeLowering &getTypeLoweringForUncachedLoweredType(TypeKey key);
@@ -642,6 +624,15 @@ public:
 
   SILType getLoweredTypeOfGlobal(VarDecl *var);
 
+  /// The return type of a materializeForSet contains a callback
+  /// whose type cannot be represented in the AST because it is
+  /// a polymorphic function value. This function returns the
+  /// unsubstituted lowered type of this callback.
+  CanSILFunctionType
+  getMaterializeForSetCallbackType(AbstractStorageDecl *storage,
+                                   CanGenericSignature genericSig,
+                                   Type selfType);
+
   /// Return the SILFunctionType for a native function value of the
   /// given type.
   CanSILFunctionType getSILFunctionType(AbstractionPattern origType,
@@ -661,6 +652,10 @@ public:
   CanSILFunctionType getConstantFunctionType(SILDeclRef constant) {
     return getConstantInfo(constant).SILFnType;
   }
+  
+  /// Returns the SILParameterInfo for the given declaration's `self` parameter.
+  /// `constant` must refer to a method.
+  SILParameterInfo getConstantSelfParameter(SILDeclRef constant);
   
   /// Returns the SILFunctionType the given declaration must use to override.
   /// Will be the same as getConstantFunctionType if the declaration does
@@ -740,8 +735,8 @@ public:
                                     Type lvalueType);
 
   /// Retrieve the set of archetypes closed over by the given function.
-  GenericParamList *getEffectiveGenericParams(AnyFunctionRef fn,
-                                              CaptureInfo captureInfo);
+  GenericEnvironment *getEffectiveGenericEnvironment(AnyFunctionRef fn,
+                                                     CaptureInfo captureInfo);
 
   /// Retrieve the set of generic parameters closed over by the given function.
   CanGenericSignature getEffectiveGenericSignature(AnyFunctionRef fn,
@@ -769,11 +764,6 @@ public:
 #define BRIDGING_KNOWN_TYPE(BridgedModule,BridgedType) \
   CanType get##BridgedType##Type();
 #include "swift/SIL/BridgedTypes.def"
-
-  /// Get the linkage for a protocol conformance's witness table.
-  static SILLinkage getLinkageForProtocolConformance(
-                                             const NormalProtocolConformance *C,
-                                             ForDefinition_t definition);
 
   /// Get the capture list from a closure, with transitive function captures
   /// flattened.
@@ -803,6 +793,13 @@ public:
   ABIDifference checkFunctionForABIDifferences(SILFunctionType *fnTy1,
                                                SILFunctionType *fnTy2);
 
+
+  /// Lower the function type as a possible substitution for the type of
+  /// \p constant. The result is not cached as part of the constant's normal
+  /// ConstantInfo.
+  CanSILFunctionType
+  getUncachedSILFunctionTypeForConstant(SILDeclRef constant,
+                                  CanAnyFunctionType origInterfaceType);
 private:
   Type getLoweredCBridgedType(AbstractionPattern pattern, Type t,
                               bool canBridgeBool,

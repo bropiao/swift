@@ -16,8 +16,8 @@
 #include "swift/SIL/SILInstruction.h"
 #include "swift/SIL/SILArgument.h"
 #include "swift/SIL/CFG.h"
-// FIXME: For mapTypeInContext
 #include "swift/AST/ArchetypeBuilder.h"
+#include "swift/AST/GenericEnvironment.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/GraphWriter.h"
@@ -25,10 +25,23 @@
 using namespace swift;
 using namespace Lowering;
 
+SILSpecializeAttr::SILSpecializeAttr(ArrayRef<Substitution> subs)
+  : numSubs(subs.size()) {
+  std::copy(subs.begin(), subs.end(), getTrailingObjects<Substitution>());
+}
+
+SILSpecializeAttr *SILSpecializeAttr::create(SILModule &M,
+                                             ArrayRef<Substitution> subs) {
+  unsigned size =
+    sizeof(SILSpecializeAttr) + (subs.size() * sizeof(Substitution));
+  void *buf = M.allocate(size, alignof(SILSpecializeAttr));
+  return ::new (buf) SILSpecializeAttr(subs);
+}
+
 SILFunction *SILFunction::create(SILModule &M, SILLinkage linkage,
                                  StringRef name,
                                  CanSILFunctionType loweredType,
-                                 GenericParamList *contextGenericParams,
+                                 GenericEnvironment *genericEnv,
                                  Optional<SILLocation> loc,
                                  IsBare_t isBareSILFunction,
                                  IsTransparent_t isTrans,
@@ -49,7 +62,7 @@ SILFunction *SILFunction::create(SILModule &M, SILLinkage linkage,
   }
 
   auto fn = new (M) SILFunction(M, linkage, name,
-                                loweredType, contextGenericParams, loc,
+                                loweredType, genericEnv, loc,
                                 isBareSILFunction, isTrans, isFragile, isThunk,
                                 classVisibility, inlineStrategy, E,
                                 insertBefore, debugScope, DC);
@@ -60,7 +73,7 @@ SILFunction *SILFunction::create(SILModule &M, SILLinkage linkage,
 
 SILFunction::SILFunction(SILModule &Module, SILLinkage Linkage,
                          StringRef Name, CanSILFunctionType LoweredType,
-                         GenericParamList *contextGenericParams,
+                         GenericEnvironment *genericEnv,
                          Optional<SILLocation> Loc,
                          IsBare_t isBareSILFunction,
                          IsTransparent_t isTrans,
@@ -74,9 +87,7 @@ SILFunction::SILFunction(SILModule &Module, SILLinkage Linkage,
   : Module(Module),
     Name(Name),
     LoweredType(LoweredType),
-    // FIXME: Context params should be independent of the function type.
-    ContextGenericParams(contextGenericParams),
-    Location(Loc),
+    GenericEnv(genericEnv),
     DeclCtx(DC),
     DebugScope(DebugScope),
     Bare(isBareSILFunction),
@@ -88,7 +99,6 @@ SILFunction::SILFunction(SILModule &Module, SILLinkage Linkage,
     InlineStrategy(inlineStrategy),
     Linkage(unsigned(Linkage)),
     KeepAsPublic(false),
-    ForeignBody(false),
     EffectsKindAttr(E) {
   if (InsertBefore)
     Module.functions.insert(SILModule::iterator(InsertBefore), this);
@@ -147,6 +157,11 @@ void SILFunction::setDeclContext(Expr *E) {
   DeclCtx = dyn_cast_or_null<AbstractClosureExpr>(E);
 }
 
+bool SILFunction::hasForeignBody() const {
+  if (!hasClangNode()) return false;
+  return SILDeclRef::isClangGenerated(getClangNode());
+}
+
 void SILFunction::numberValues(llvm::DenseMap<const ValueBase*,
                                unsigned> &ValueToNumberMap) const {
   unsigned idx = 0;
@@ -172,7 +187,7 @@ bool SILFunction::shouldOptimize() const {
 
 Type SILFunction::mapTypeIntoContext(Type type) const {
   return ArchetypeBuilder::mapTypeIntoContext(getModule().getSwiftModule(),
-                                              getContextGenericParams(),
+                                              getGenericEnvironment(),
                                               type);
 }
 
@@ -274,8 +289,13 @@ SILType ArchetypeBuilder::substDependentType(SILModule &M, SILType type) {
 
 Type SILFunction::mapTypeOutOfContext(Type type) const {
   return ArchetypeBuilder::mapTypeOutOfContext(getModule().getSwiftModule(),
-                                               getContextGenericParams(),
+                                               getGenericEnvironment(),
                                                type);
+}
+
+bool SILFunction::isNoReturnFunction() const {
+  return SILType::getPrimitiveObjectType(getLoweredFunctionType())
+      .isNoReturnFunction();
 }
 
 SILBasicBlock *SILFunction::createBasicBlock() {
@@ -497,9 +517,25 @@ bool SILFunction::hasName(const char *Name) const {
   return getName() == Name;
 }
 
-  /// Helper method which returns true if the linkage of the SILFunction
-  /// indicates that the objects definition might be required outside the
-  /// current SILModule.
+/// Returns true if this function can be referenced from a fragile function
+/// body.
+bool SILFunction::hasValidLinkageForFragileRef() const {
+  // Fragile functions can reference 'static inline' functions imported
+  // from C.
+  if (hasForeignBody())
+    return true;
+
+  // If we can inline it, we can reference it.
+  if (hasValidLinkageForFragileInline())
+    return true;
+
+  // Otherwise, only public functions can be referenced.
+  return hasPublicVisibility(getLinkage());
+}
+
+/// Helper method which returns true if the linkage of the SILFunction
+/// indicates that the objects definition might be required outside the
+/// current SILModule.
 bool
 SILFunction::isPossiblyUsedExternally() const {
   return swift::isPossiblyUsedExternally(getLinkage(),
@@ -518,8 +554,16 @@ void SILFunction::convertToDeclaration() {
 }
 
 ArrayRef<Substitution> SILFunction::getForwardingSubstitutions() {
-  auto *params = getContextGenericParams();
-  if (!params)
+  if (ForwardingSubs)
+    return *ForwardingSubs;
+
+  auto *env = getGenericEnvironment();
+  if (!env)
     return {};
-  return params->getForwardingSubstitutions(getASTContext());
+
+  auto sig = getLoweredFunctionType()->getGenericSignature();
+  auto *M = getModule().getSwiftModule();
+  ForwardingSubs = env->getForwardingSubstitutions(M, sig);
+
+  return *ForwardingSubs;
 }

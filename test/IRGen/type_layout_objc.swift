@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk) -emit-ir %s | FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-%target-ptrsize
+// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk) -emit-ir %s | %FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-%target-ptrsize
 // REQUIRES: objc_interop
 
 import Foundation
@@ -20,8 +20,8 @@ enum EMult { case X(Int64), Y(Int64) }
 @_alignment(4)
 struct CommonLayout { var x,y,z,w: Int8 }
 
-// CHECK:       @_TMPV16type_layout_objc14TypeLayoutTest = {{(protected )?}}global {{.*}} @create_generic_metadata_TypeLayoutTest
-// CHECK:       define{{( protected)?}} private %swift.type* @create_generic_metadata_TypeLayoutTest
+// CHECK:       @_TMPV16type_layout_objc14TypeLayoutTest = hidden global {{.*}} @create_generic_metadata_TypeLayoutTest
+// CHECK:       define private %swift.type* @create_generic_metadata_TypeLayoutTest
 struct TypeLayoutTest<T> {
   // -- dynamic layout, projected from metadata
   // CHECK:       [[T0:%.*]] = bitcast %swift.type* %T to i8***

@@ -24,9 +24,9 @@ public struct Arguments {
   }
 }
 
-/// Using Process.arguments, returns an Arguments struct describing
+/// Using CommandLine.arguments, returns an Arguments struct describing
 /// the arguments to this program. If we fail to parse arguments, we
-/// return .None.
+/// return nil.
 ///
 /// We assume that optional switch args are of the form:
 ///
@@ -35,18 +35,18 @@ public struct Arguments {
 ///
 /// with opt-name and opt-value not containing any '=' signs. Any
 /// other option passed in is assumed to be a positional argument.
-public func parseArgs(validOptions: [String]? = .None)
+public func parseArgs(_ validOptions: [String]? = nil)
   -> Arguments? {
-  let progName = Process.arguments[0]
+  let progName = CommandLine.arguments[0]
   var positionalArgs = [String]()
   var optionalArgsMap = [String : String]()
 
   // For each argument we are passed...
   var passThroughArgs = false
-  for arg in Process.arguments[1..<Process.arguments.count] {
+  for arg in CommandLine.arguments[1..<CommandLine.arguments.count] {
     // If the argument doesn't match the optional argument pattern. Add
     // it to the positional argument list and continue...
-    if passThroughArgs || !arg.characters.startsWith("-".characters) {
+    if passThroughArgs || !arg.characters.starts(with: "-".characters) {
       positionalArgs.append(arg)
       continue
     }
@@ -55,11 +55,11 @@ public func parseArgs(validOptions: [String]? = .None)
       continue
     }
     // Attempt to split it into two components separated by an equals sign.
-    let components = arg.componentsSeparatedByString("=")
+    let components = arg.components(separatedBy: "=")
     let optionName = components[0]
     if validOptions != nil && !validOptions!.contains(optionName) {
       print("Invalid option: \(arg)")
-      return .None
+      return nil
     }
     var optionVal : String
     switch components.count {
@@ -69,10 +69,10 @@ public func parseArgs(validOptions: [String]? = .None)
       // If we do not have two components at this point, we can not have
       // an option switch. This is an invalid argument. Bail!
       print("Invalid option: \(arg)")
-      return .None
+      return nil
     }
     optionalArgsMap[optionName] = optionVal
   }
 
-  return .Some(Arguments(progName, positionalArgs, optionalArgsMap))
+  return Arguments(progName, positionalArgs, optionalArgsMap)
 }

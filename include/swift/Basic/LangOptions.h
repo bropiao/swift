@@ -15,8 +15,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef SWIFT_LANGOPTIONS_H
-#define SWIFT_LANGOPTIONS_H
+#ifndef SWIFT_BASIC_LANGOPTIONS_H
+#define SWIFT_BASIC_LANGOPTIONS_H
 
 #include "swift/Basic/LLVM.h"
 #include "clang/Basic/VersionTuple.h"
@@ -44,9 +44,6 @@ namespace swift {
     /// \brief Disable API availability checking.
     bool DisableAvailabilityChecking = false;
     
-    /// Whether to warn about "needless" words in declarations.
-    bool WarnOmitNeedlessWords = false;
-
     /// Should access control be respected?
     bool EnableAccessControl = true;
 
@@ -128,38 +125,28 @@ namespace swift {
 
     /// \brief The upper bound, in bytes, of temporary data that can be
     /// allocated by the constraint solver.
-    unsigned SolverMemoryThreshold = 15000000;
+    unsigned SolverMemoryThreshold = 33554432; /* 32 * 1024 * 1024 */
 
     /// \brief Perform all dynamic allocations using malloc/free instead of
     /// optimized custom allocator, so that memory debugging tools can be used.
     bool UseMalloc = false;
-    
-    /// \brief Enable experimental "switch" pattern-matching features.
-    bool EnableExperimentalPatterns = false;
 
     /// \brief Enable experimental property behavior feature.
     bool EnableExperimentalPropertyBehaviors = false;
+
+    /// \brief Enable experimental nested generic types feature.
+    bool EnableExperimentalNestedGenericTypes = false;
 
     /// Should we check the target OSs of serialized modules to see that they're
     /// new enough?
     bool EnableTargetOSChecking = true;
 
-    /// Whether we're omitting needless words when importing Objective-C APIs.
+    /// Whether to use the import as member inference system
     ///
-    /// The vast majority of the logic for omitting needless words is
-    /// centralized in the Clang importer. However, there are a few
-    /// places elsewhere in the compiler that specifically reference
-    /// Objective-C entities whose names are affected by
-    /// omit-needless-words.
-    bool OmitNeedlessWords = false;
-
-    /// Whether we are stripping the "NS" prefix from Foundation et al.
-    ///
-    /// This is only queried when \c OmitNeedlessWords is true.
-    bool StripNSPrefix = false;
-
-    /// Enable the Swift 3 migration via Fix-Its.
-    bool Swift3Migration = false;
+    /// When importing a global, try to infer whether we can import it as a
+    /// member of some type instead. This includes inits, computed properties,
+    /// and methods.
+    bool InferImportAsMember = false;
 
     /// Sets the target we are building for and updates platform conditions
     /// to match.
@@ -181,9 +168,8 @@ namespace swift {
       } else if (Target.isWatchOS()) {
         Target.getOSVersion(major, minor, revision);
       } else if (Target.isOSLinux() || Target.isOSFreeBSD() ||
-                 Target.isOSWindows() ||
-                 Target.getTriple().empty())
-      {
+                 Target.isAndroid() || Target.isOSWindows() ||
+                 Target.isPS4() || Target.getTriple().empty()) {
         major = minor = revision = 0;
       } else {
         llvm_unreachable("Unsupported target OS");
@@ -231,18 +217,24 @@ namespace swift {
 
     /// Returns true if the 'os' platform condition argument represents
     /// a supported target operating system.
-    static bool isPlatformConditionOSSupported(StringRef OSName);
+    ///
+    /// Note that this also canonicalizes the OS name if the check returns
+    /// true.
+    static bool checkPlatformConditionOS(StringRef &OSName);
 
     /// Returns true if the 'arch' platform condition argument represents
     /// a supported target architecture.
     static bool isPlatformConditionArchSupported(StringRef ArchName);
+
+    /// Returns true if the 'endian' platform condition argument represents
+    /// a supported target endianness.
+    static bool isPlatformConditionEndiannessSupported(StringRef endianness);
 
   private:
     llvm::SmallVector<std::pair<std::string, std::string>, 3>
         PlatformConditionValues;
     llvm::SmallVector<std::string, 2> CustomConditionalCompilationFlags;
   };
-}
+} // end namespace swift
 
-#endif // SWIFT_LANGOPTIONS_H
-
+#endif // SWIFT_BASIC_LANGOPTIONS_H

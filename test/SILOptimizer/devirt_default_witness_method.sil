@@ -1,4 +1,4 @@
-// RUN: %target-sil-opt -enable-sil-verify-all %s -sil-combine -enable-resilience | FileCheck %s
+// RUN: %target-sil-opt -enable-sil-verify-all %s -sil-combine -enable-resilience | %FileCheck %s
 sil_stage canonical
 
 import Builtin
@@ -15,7 +15,7 @@ bb0(%0 : $*Self):
   return %result : $()
 }
 
-sil_default_witness_table ResilientProtocol 1 {
+sil_default_witness_table ResilientProtocol {
   method #ResilientProtocol.defaultA!1: @defaultA
 }
 

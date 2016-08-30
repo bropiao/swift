@@ -1,10 +1,10 @@
-// RUN: %target-swift-frontend -primary-file %s -emit-ir | FileCheck %s
+// RUN: %target-swift-frontend -primary-file %s -emit-ir | %FileCheck %s
 
 // REQUIRES: CPU=x86_64
 
 // -- partial_apply context metadata
 
-// CHECK: [[METADATA:@.*]] = private constant %swift.full_boxmetadata { void (%swift.refcounted*)* [[DESTROY:@objectdestroy.1]], i8** null, %swift.type { i64 64 }, i32 16 }
+// CHECK: [[METADATA:@.*]] = private constant %swift.full_boxmetadata { void (%swift.refcounted*)* @objectdestroy, i8** null, %swift.type { i64 64 }, i32 16, i8* bitcast (<{ i32, i32, i32, i32 }>* @"\01l__swift3_capture_descriptor" to i8*) }
 
 func a(i i: Int) -> (Int) -> Int {
   return { x in i }

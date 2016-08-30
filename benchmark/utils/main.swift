@@ -22,6 +22,7 @@ import TestsUtils
 import DriverUtils
 import Ackermann
 import AngryPhonebook
+import AnyHashableWithAClass
 import Array2D
 import ArrayAppend
 import ArrayInClass
@@ -52,6 +53,7 @@ import Hanoi
 import Hash
 import Histogram
 import Integrate
+import IterateData
 import Join
 import LinkedList
 import MapReduce
@@ -63,6 +65,9 @@ import NSError
 import NSStringConversion
 import NopDeinit
 import ObjectAllocation
+import ObjectiveCBridging
+import ObjectiveCBridgingStubs
+import ObjectiveCNoBridgingStubs
 import OpenClose
 import Phonebook
 import PolymorphicCalls
@@ -80,6 +85,7 @@ import SevenBoom
 import Sim2DArray
 import SortLettersInPlace
 import SortStrings
+import StackPromo
 import StaticArray
 import StrComplexWalk
 import StrToInt
@@ -90,11 +96,13 @@ import StringWalk
 import SuperChars
 import TwoSum
 import TypeFlood
+import UTF8Decode
 import Walsh
 import XorLoop
 
 precommitTests = [
   "AngryPhonebook": run_AngryPhonebook,
+  "AnyHashableWithAClass": run_AnyHashableWithAClass,
   "Array2D": run_Array2D,
   "ArrayAppend": run_ArrayAppend,
   "ArrayAppendReserved": run_ArrayAppendReserved,
@@ -117,18 +125,24 @@ precommitTests = [
   "ClassArrayGetter": run_ClassArrayGetter,
   "DeadArray": run_DeadArray,
   "Dictionary": run_Dictionary,
+  "DictionaryOfObjects": run_DictionaryOfObjects,
   "Dictionary2": run_Dictionary2,
+  "Dictionary2OfObjects": run_Dictionary2OfObjects,
   "Dictionary3": run_Dictionary3,
+  "Dictionary3OfObjects": run_Dictionary3OfObjects,
   "DictionaryBridge": run_DictionaryBridge,
   "DictionaryLiteral": run_DictionaryLiteral,
   "DictionaryRemove": run_DictionaryRemove,
+  "DictionaryRemoveOfObjects": run_DictionaryRemoveOfObjects,
   "DictionarySwap": run_DictionarySwap,
+  "DictionarySwapOfObjects": run_DictionarySwapOfObjects,
   "ErrorHandling": run_ErrorHandling,
   "GlobalClass": run_GlobalClass,
   "Hanoi": run_Hanoi,
   "HashTest": run_HashTest,
   "Histogram": run_Histogram,
   "Integrate": run_Integrate,
+  "IterateData": run_IterateData,
   "Join": run_Join,
   "LinkedList": run_LinkedList,
   "MapReduce": run_MapReduce,
@@ -140,6 +154,42 @@ precommitTests = [
   "NSStringConversion": run_NSStringConversion,
   "NopDeinit": run_NopDeinit,
   "ObjectAllocation": run_ObjectAllocation,
+  "ObjectiveCBridgeFromNSString": run_ObjectiveCBridgeFromNSString,
+  "ObjectiveCBridgeFromNSStringForced": run_ObjectiveCBridgeFromNSStringForced,
+  "ObjectiveCBridgeToNSString": run_ObjectiveCBridgeToNSString,
+  "ObjectiveCBridgeFromNSArrayAnyObject": run_ObjectiveCBridgeFromNSArrayAnyObject,
+  "ObjectiveCBridgeFromNSArrayAnyObjectForced": run_ObjectiveCBridgeFromNSArrayAnyObjectForced,
+  "ObjectiveCBridgeToNSArray": run_ObjectiveCBridgeToNSArray,
+  "ObjectiveCBridgeFromNSArrayAnyObjectToString": run_ObjectiveCBridgeFromNSArrayAnyObjectToString,
+  "ObjectiveCBridgeFromNSArrayAnyObjectToStringForced": run_ObjectiveCBridgeFromNSArrayAnyObjectToStringForced,
+  "ObjectiveCBridgeFromNSDictionaryAnyObject": run_ObjectiveCBridgeFromNSDictionaryAnyObject,
+  "ObjectiveCBridgeFromNSDictionaryAnyObjectForced": run_ObjectiveCBridgeFromNSDictionaryAnyObjectForced,
+  "ObjectiveCBridgeFromNSDictionaryAnyObjectToString": run_ObjectiveCBridgeFromNSDictionaryAnyObjectToString,
+  "ObjectiveCBridgeFromNSDictionaryAnyObjectToStringForced": run_ObjectiveCBridgeFromNSDictionaryAnyObjectToStringForced,
+  "ObjectiveCBridgeToNSDictionary": run_ObjectiveCBridgeToNSDictionary,
+  "ObjectiveCBridgeFromNSSetAnyObject": run_ObjectiveCBridgeFromNSSetAnyObject,
+  "ObjectiveCBridgeFromNSSetAnyObjectForced": run_ObjectiveCBridgeFromNSSetAnyObjectForced,
+  "ObjectiveCBridgeFromNSSetAnyObjectToString": run_ObjectiveCBridgeFromNSSetAnyObjectToString,
+  "ObjectiveCBridgeFromNSSetAnyObjectToStringForced": run_ObjectiveCBridgeFromNSSetAnyObjectToStringForced,
+  "ObjectiveCBridgeToNSSet": run_ObjectiveCBridgeToNSSet,
+  "ObjectiveCBridgeStubFromNSString": run_ObjectiveCBridgeStubFromNSString,
+  "ObjectiveCBridgeStubFromNSStringRef": run_ObjectiveCBridgeStubFromNSStringRef,
+  "ObjectiveCBridgeStubToNSString": run_ObjectiveCBridgeStubToNSString,
+  "ObjectiveCBridgeStubToNSStringRef": run_ObjectiveCBridgeStubToNSStringRef,
+  "ObjectiveCBridgeStubFromArrayOfNSString": run_ObjectiveCBridgeStubFromArrayOfNSString,
+  "ObjectiveCBridgeStubToArrayOfNSString": run_ObjectiveCBridgeStubToArrayOfNSString,
+  "ObjectiveCBridgeStubFromNSDate": run_ObjectiveCBridgeStubFromNSDate,
+  "ObjectiveCBridgeStubFromNSDateRef": run_ObjectiveCBridgeStubFromNSDateRef,
+  "ObjectiveCBridgeStubToNSDate": run_ObjectiveCBridgeStubToNSDate,
+  "ObjectiveCBridgeStubToNSDateRef": run_ObjectiveCBridgeStubToNSDateRef,
+  "ObjectiveCBridgeStubDateAccess": run_ObjectiveCBridgeStubDateAccess,
+  "ObjectiveCBridgeStubNSDateRefAccess": run_ObjectiveCBridgeStubNSDateRefAccess,
+  "ObjectiveCBridgeStubDateMutation": run_ObjectiveCBridgeStubDateMutation,
+  "ObjectiveCBridgeStubNSDateMutationRef": run_ObjectiveCBridgeStubNSDateMutationRef,
+  "ObjectiveCBridgeStubURLAppendPath": run_ObjectiveCBridgeStubURLAppendPath,
+  "ObjectiveCBridgeStubURLAppendPathRef": run_ObjectiveCBridgeStubURLAppendPathRef,
+  "ObjectiveCBridgeStubDataAppend": run_ObjectiveCBridgeStubDataAppend,
+  "ObjectiveCBridgeStubNSDataAppend": run_ObjectiveCBridgeStubNSDataAppend,
   "OpenClose": run_OpenClose,
   "Phonebook": run_Phonebook,
   "PolymorphicCalls": run_PolymorphicCalls,
@@ -151,26 +201,39 @@ precommitTests = [
   "ProtocolDispatch2": run_ProtocolDispatch2,
   "RC4": run_RC4,
   "RGBHistogram": run_RGBHistogram,
+  "RGBHistogramOfObjects": run_RGBHistogramOfObjects,
   "RangeAssignment": run_RangeAssignment,
   "RecursiveOwnedParameter": run_RecursiveOwnedParameter,
   "SetExclusiveOr": run_SetExclusiveOr,
   "SetIntersect": run_SetIntersect,
   "SetIsSubsetOf": run_SetIsSubsetOf,
   "SetUnion": run_SetUnion,
+  "SetExclusiveOr_OfObjects": run_SetExclusiveOr_OfObjects,
+  "SetIntersect_OfObjects": run_SetIntersect_OfObjects,
+  "SetIsSubsetOf_OfObjects": run_SetIsSubsetOf_OfObjects,
+  "SetUnion_OfObjects": run_SetUnion_OfObjects,
   "SevenBoom": run_SevenBoom,
   "Sim2DArray": run_Sim2DArray,
   "SortLettersInPlace": run_SortLettersInPlace,
   "SortStrings": run_SortStrings,
+  "SortStringsUnicode": run_SortStringsUnicode,
+  "StackPromo": run_StackPromo,
   "StaticArray": run_StaticArray,
   "StrComplexWalk": run_StrComplexWalk,
   "StrToInt": run_StrToInt,
   "StringBuilder": run_StringBuilder,
+  "StringEqualPointerComparison": run_StringEqualPointerComparison,
   "StringInterpolation": run_StringInterpolation,
+  "StringHasPrefix": run_StringHasPrefix,
+  "StringHasPrefixUnicode": run_StringHasPrefixUnicode,
+  "StringHasSuffix": run_StringHasSuffix,
+  "StringHasSuffixUnicode": run_StringHasSuffixUnicode,
   "StringWalk": run_StringWalk,
   "StringWithCString": run_StringWithCString,
   "SuperChars": run_SuperChars,
   "TwoSum": run_TwoSum,
   "TypeFlood": run_TypeFlood,
+  "UTF8Decode": run_UTF8Decode,
   "Walsh": run_Walsh,
   "XorLoop": run_XorLoop,
 ]

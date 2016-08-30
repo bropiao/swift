@@ -73,6 +73,9 @@ def disable_objc_interop :
   Flag<["-"], "disable-objc-interop">,
   HelpText<"Disable Objective-C interop code generation and config directives">;
 
+def enable_swiftcall : Flag<["-"], "enable-swiftcall">,
+  HelpText<"Enable the use of LLVM swiftcall support">;
+
 def enable_objc_attr_requires_foundation_module :
   Flag<["-"], "enable-objc-attr-requires-foundation-module">,
   HelpText<"Enable requiring uses of @objc to require importing the "
@@ -104,6 +107,9 @@ def print_clang_stats : Flag<["-"], "print-clang-stats">,
 
 def serialize_debugging_options : Flag<["-"], "serialize-debugging-options">,
   HelpText<"Always serialize options for debugging (default: only for apps)">;
+
+def autolink_library : Separate<["-"], "autolink-library">,
+  HelpText<"Add dependent library">, Flags<[FrontendOption]>;
 
 } // end let Flags = [FrontendOption, NoDriverOption]
 
@@ -172,6 +178,9 @@ def disable_diagnostic_passes : Flag<["-"], "disable-diagnostic-passes">,
 def disable_llvm_optzns : Flag<["-"], "disable-llvm-optzns">,
   HelpText<"Don't run LLVM optimization passes">;
 
+def disable_sil_perf_optzns : Flag<["-"], "disable-sil-perf-optzns">,
+  HelpText<"Don't run SIL performance optimization passes">;
+
 def disable_llvm_arc_opts : Flag<["-"], "disable-llvm-arc-opts">,
   HelpText<"Don't run LLVM ARC optimization passes.">;
 
@@ -187,14 +196,11 @@ def disable_llvm_value_names : Flag<["-"], "disable-llvm-value-names">,
 def enable_llvm_value_names : Flag<["-"], "enable-llvm-value-names">,
   HelpText<"Add names to local values in LLVM IR">;
 
-def enable_reflection_metadata : Flag<["-"], "enable-reflection-metadata">,
-  HelpText<"Enable emission of reflection metadata for nominal types">;
+def disable_reflection_metadata : Flag<["-"], "disable-reflection-metadata">,
+  HelpText<"Disable emission of reflection metadata for nominal types">;
 
-def strip_reflection_metadata : Flag<["-"], "strip-reflection-metadata">,
-  HelpText<"Strip all reflection metadata for nominal types">;
-
-def strip_reflection_names : Flag<["-"], "strip-reflection-names">,
-  HelpText<"Strip names of stored properties and enum cases from"
+def disable_reflection_names : Flag<["-"], "disable-reflection-names">,
+  HelpText<"Disable emission of names of stored properties and enum cases in"
            "reflection metadata">;
 
 def stack_promotion_checks : Flag<["-"], "emit-stack-promotion-checks">,
@@ -213,40 +219,31 @@ def dump_clang_diagnostics : Flag<["-"], "dump-clang-diagnostics">,
 def emit_verbose_sil : Flag<["-"], "emit-verbose-sil">,
   HelpText<"Emit locations during SIL emission">;
 
-def enable_experimental_patterns : Flag<["-"], "enable-experimental-patterns">,
-  HelpText<"Enable experimental 'switch' pattern matching features">;
-
 def enable_experimental_property_behaviors :
   Flag<["-"], "enable-experimental-property-behaviors">,
   HelpText<"Enable experimental property behaviors">;
+
+def enable_experimental_nested_generic_types :
+  Flag<["-"], "enable-experimental-nested-generic-types">,
+  HelpText<"Enable experimental support for nested generic types">;
 
 def disable_availability_checking : Flag<["-"],
   "disable-availability-checking">,
   HelpText<"Disable checking for potentially unavailable APIs">;
 
-def enable_omit_needless_words :
-  Flag<["-"], "enable-omit-needless-words">,
-  HelpText<"Omit needless words when importing Objective-C names">;
+def enable_infer_import_as_member :
+  Flag<["-"], "enable-infer-import-as-member">,
+  HelpText<"Infer when a global could be imported as a member">;
 
-def enable_strip_ns_prefix :
-  Flag<["-"], "enable-strip-ns-prefix">,
-  HelpText<"Strip 'NS' prefix from Foundation entities">;
+def enable_swift_newtype :
+  Flag<["-"], "enable-swift-newtype">,
+  HelpText<"Enable the swift_newtype attribute">;
 
-def enable_infer_default_arguments :
-  Flag<["-"], "enable-infer-default-arguments">,
-  HelpText<"Infer default arguments for imported parameters">;
-
-def enable_swift_name_lookup_tables :
-  Flag<["-"], "enable-swift-name-lookup-tables">,
-  HelpText<"Enable Swift name lookup tables in the Clang importer">;
-
-def swift3_migration :
-  Flag<["-"], "swift3-migration">,
-  HelpText<"Enable Fix-It based migration aids for Swift 3">;
-
-def warn_omit_needless_words :
-  Flag<["-"], "Womit-needless-words">,
-  HelpText<"Warn about needless words in names">;
+def warn_long_function_bodies : Separate<["-"], "warn-long-function-bodies">,
+  MetaVarName<"<n>">,
+  HelpText<"Warns when type-checking a function takes longer than <n> ms">;
+def warn_long_function_bodies_EQ : Joined<["-"], "warn-long-function-bodies=">,
+  Alias<warn_long_function_bodies>;
 
 def enable_source_import : Flag<["-"], "enable-source-import">,
   HelpText<"Enable importing of Swift source files">;
@@ -292,6 +289,10 @@ def sil_debug_serialization : Flag<["-"], "sil-debug-serialization">,
 def print_inst_counts : Flag<["-"], "print-inst-counts">,
   HelpText<"Before IRGen, count all the various SIL instructions. Must be used "
            "in conjunction with -print-stats.">;
+
+def debug_on_sil : Flag<["-"], "gsil">,
+  HelpText<"Write the SIL into a file and generate debug-info to debug on SIL "
+           " level.">;
 
 def print_llvm_inline_tree : Flag<["-"], "print-llvm-inline-tree">,
   HelpText<"Print the LLVM inline tree.">;

@@ -13,11 +13,13 @@
 // This file implements the GenericSignature class.
 //
 //===----------------------------------------------------------------------===//
+
 #include "swift/AST/GenericSignature.h"
 #include "swift/AST/ASTContext.h"
 #include "swift/AST/Decl.h"
 #include "swift/AST/Module.h"
 #include "swift/AST/Types.h"
+
 using namespace swift;
 
 GenericSignature::GenericSignature(ArrayRef<GenericTypeParamType *> params,
@@ -414,6 +416,63 @@ GenericSignature::getSubstitutionMap(ArrayRef<Substitution> args) const {
   return subs;
 }
 
+void GenericSignature::
+getSubstitutions(ModuleDecl &mod,
+                 const TypeSubstitutionMap &subs,
+                 GenericSignature::LookupConformanceFn lookupConformance,
+                 SmallVectorImpl<Substitution> &result) {
+  auto &ctx = getASTContext();
+
+  Type currentReplacement;
+  SmallVector<ProtocolConformanceRef, 4> currentConformances;
+
+  for (const auto &req : getRequirements()) {
+    switch (req.getKind()) {
+    case RequirementKind::Conformance: {
+      // Get the conformance and record it.
+      auto protoType = req.getSecondType()->castTo<ProtocolType>();
+      currentConformances.push_back(
+          lookupConformance(currentReplacement, protoType));
+      break;
+    }
+
+    case RequirementKind::Superclass:
+      // Superclass requirements aren't recorded in substitutions.
+      break;
+
+    case RequirementKind::SameType:
+      // Same-type requirements aren't recorded in substitutions.
+      break;
+
+    case RequirementKind::WitnessMarker:
+      // Flush the current conformances.
+      if (currentReplacement) {
+        result.push_back({
+          currentReplacement,
+          ctx.AllocateCopy(currentConformances)
+        });
+        currentConformances.clear();
+      }
+
+      // Each witness marker starts a new substitution.
+      currentReplacement = req.getFirstType().subst(&mod, subs, SubstOptions());
+      if (!currentReplacement)
+        currentReplacement = ErrorType::get(ctx);
+
+      break;
+    }
+  }
+
+  // Flush the final conformances.
+  if (currentReplacement) {
+    result.push_back({
+      currentReplacement,
+      ctx.AllocateCopy(currentConformances),
+    });
+    currentConformances.clear();
+  }
+}
+
 bool GenericSignature::requiresClass(Type type, ModuleDecl &mod) {
   if (!type->isTypeParameter()) return false;
 
@@ -539,4 +598,59 @@ bool GenericSignature::areSameTypeParameterInContext(Type type1, Type type2,
   assert(!pa2->isConcreteType());
 
   return pa1 == pa2;
+}
+
+bool GenericSignature::isCanonicalTypeInContext(Type type, ModuleDecl &mod) {
+  // If the type isn't independently canonical, it's certainly not canonical
+  // in this context.
+  if (!type->isCanonical())
+    return false;
+
+  // All the contextual canonicality rules apply to type parameters, so if the
+  // type doesn't involve any type parameters, it's already canonical.
+  if (!type->hasTypeParameter())
+    return true;
+
+  auto &builder = *getArchetypeBuilder(mod);
+
+  // Look for non-canonical type parameters.
+  return !type.findIf([&](Type component) -> bool {
+    if (!component->isTypeParameter()) return false;
+
+    auto pa = builder.resolveArchetype(component);
+    if (!pa) return false;
+
+    auto rep = pa->getArchetypeAnchor();
+    return (rep->isConcreteType() || pa != rep);
+  });
+}
+
+CanType GenericSignature::getCanonicalTypeInContext(Type type, ModuleDecl &mod) {
+  type = type->getCanonicalType();
+
+  // All the contextual canonicality rules apply to type parameters, so if the
+  // type doesn't involve any type parameters, it's already canonical.
+  if (!type->hasTypeParameter())
+    return CanType(type);
+
+  auto &builder = *getArchetypeBuilder(mod);
+
+  // Replace non-canonical type parameters.
+  type = type.transform([&](Type component) -> Type {
+    if (!component->isTypeParameter()) return component;
+
+    // Resolve the potential archetype.  This can be null in nested generic
+    // types, which we can't immediately canonicalize.
+    auto pa = builder.resolveArchetype(component);
+    if (!pa) return component;
+
+    auto rep = pa->getArchetypeAnchor();
+    if (rep->isConcreteType()) {
+      return getCanonicalTypeInContext(rep->getConcreteType(), mod);
+    } else {
+      return rep->getDependentType(builder, /*allowUnresolved*/ false);
+    }
+  });
+
+  return type->getCanonicalType();
 }

@@ -24,12 +24,7 @@
 
 #ifdef __cplusplus
 namespace swift { extern "C" {
-#else
-#define bool _Bool
 #endif
-
-SWIFT_RUNTIME_EXPORT
-bool swift_objc_class_usesNativeSwiftReferenceCounting(const void *);
 
 /// Return an NSString to be used as the Mirror summary of the object
 SWIFT_RUNTIME_STDLIB_INTERFACE
@@ -50,14 +45,6 @@ const char *_swift_stdlib_strtod_clocale(const char *nptr, double *outResult);
 SWIFT_RUNTIME_STDLIB_INTERFACE
 const char *_swift_stdlib_strtof_clocale(const char *nptr, float *outResult);
 
-struct Metadata;
-  
-/// Return the superclass, if any.  The result is nullptr for root
-/// classes and class protocol types.
-SWIFT_RUNTIME_EXPORT
-const struct Metadata *swift_class_getSuperclass(
-  const struct Metadata *);
-  
 SWIFT_RUNTIME_STDLIB_INTERFACE
 void _swift_stdlib_flockfile_stdout(void);
 SWIFT_RUNTIME_STDLIB_INTERFACE

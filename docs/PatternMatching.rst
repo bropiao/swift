@@ -206,7 +206,7 @@ see the pattern grammar)::
   case (0, var y):
     return 1
   case (var x, var y)
-    return foo(x-1,y) + foo(x,y-1)
+    return foo(x - 1, y) + foo(x, y - 1)
   }
 
 It's tempting to just say that an unsound name binding (i.e. a name
@@ -292,10 +292,10 @@ braces end up causing a lot of unnecessary vertical whitespace, like so::
 
   switch (x)
   case .foo {
-    …
+    // …
   }
   case .bar {
-    …
+    // …
   }
   
 So instead, let's require the switch statement to have braces, and
@@ -303,9 +303,9 @@ we'll allow the cases to be written without them::
 
   switch (x) {
   case .foo:
-    …
+    // …
   case .bar:
-    …
+    // …
   }
 
 That's really a lot prettier, except it breaks the rule about always grouping
@@ -398,19 +398,19 @@ work.
 
 The current Swift approximation is::
 
-  func length(list : List) : Int {
+  func length(_ list : List) : Int {
     switch list {
       case .nil: return 0
-      case .cons(_,var tail): return 1 + length(tail)
+      case .cons(_, var tail): return 1 + length(tail)
     }
   }
 
 That's quite a bit more syntax, but it's mostly the extra braces from the
 function body. We could remove those with something like this::
 
-  func length(list : List) : Int = switch list {
+  func length(_ list : List) : Int = switch list {
     case .nil: return 0
-    case .cons(_,var tail): return 1 + length(tail)
+    case .cons(_, var tail): return 1 + length(tail)
   }
 
 Anyway, that's easy to add later if we see the need.

@@ -120,7 +120,7 @@ static bool canonicalizeInputFunction(Function &F, ARCEntryPointBuilder &B,
         NativeRefs.insert(ArgVal);
         for (auto &X : UnknownRetains[ArgVal]) {
           B.setInsertPoint(X);
-          B.createRetain(ArgVal);
+          B.createRetain(ArgVal, cast<CallInst>(X));
           X->eraseFromParent();
           ++NumUnknownRetainReleaseSRed;
           Changed = true;
@@ -146,7 +146,7 @@ static bool canonicalizeInputFunction(Function &F, ARCEntryPointBuilder &B,
            UnknownRetains[ArgVal].push_back(&CI);
         } else {
           B.setInsertPoint(&CI);
-          B.createRetain(ArgVal);
+          B.createRetain(ArgVal, &CI);
           CI.eraseFromParent();
           ++NumUnknownRetainReleaseSRed;
           Changed = true;
@@ -167,7 +167,7 @@ static bool canonicalizeInputFunction(Function &F, ARCEntryPointBuilder &B,
         NativeRefs.insert(ArgVal);
         for (auto &X : UnknownReleases[ArgVal]) {
           B.setInsertPoint(X);
-          B.createRelease(ArgVal);
+          B.createRelease(ArgVal, cast<CallInst>(X));
           X->eraseFromParent();
           ++NumUnknownRetainReleaseSRed;
           Changed = true;
@@ -193,7 +193,7 @@ static bool canonicalizeInputFunction(Function &F, ARCEntryPointBuilder &B,
           UnknownReleases[ArgVal].push_back(&CI);
         } else {
           B.setInsertPoint(&CI);
-          B.createRelease(ArgVal);
+          B.createRelease(ArgVal, &CI);
           CI.eraseFromParent();
           ++NumUnknownRetainReleaseSRed;
           Changed = true;
@@ -545,8 +545,10 @@ static DtorKind analyzeDestructor(Value *P) {
 
   // We have to have a known heap metadata value, reject dynamically computed
   // ones, or places
+  // Also, make sure we have a definitive initializer for the global.
   GlobalVariable *GV = dyn_cast<GlobalVariable>(P->stripPointerCasts());
-  if (GV == 0 || GV->mayBeOverridden()) return DtorKind::Unknown;
+  if (GV == 0 || !GV->hasDefinitiveInitializer())
+    return DtorKind::Unknown;
 
   ConstantStruct *CS = dyn_cast_or_null<ConstantStruct>(GV->getInitializer());
   if (CS == 0 || CS->getNumOperands() == 0) return DtorKind::Unknown;
@@ -835,7 +837,7 @@ static bool performLocalRetainUnownedOpt(CallInst *Retain, BasicBlock &BB,
       
       // Replace the trailing release with a check_unowned.
       B.setInsertPoint(ThisRelease);
-      B.createCheckUnowned(RetainedObject);
+      B.createCheckUnowned(RetainedObject, ThisRelease);
       Retain->eraseFromParent();
       ThisRelease->eraseFromParent();
       ++NumRetainReleasePairs;

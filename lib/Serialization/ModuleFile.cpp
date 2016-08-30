@@ -109,8 +109,10 @@ static bool readOptionsBlock(llvm::BitstreamCursor &cursor,
     case options_block::IS_TESTABLE:
       extendedInfo.setIsTestable(true);
       break;
-    case options_block::IS_RESILIENT:
-      extendedInfo.setIsResilient(true);
+    case options_block::RESILIENCE_STRATEGY:
+      unsigned Strategy;
+      options_block::ResilienceStrategyLayout::readRecord(scratch, Strategy);
+      extendedInfo.setResilienceStrategy(ResilienceStrategy(Strategy));
       break;
     default:
       // Unknown options record, possibly for use by a future version of the
@@ -186,6 +188,11 @@ validateControlBlock(llvm::BitstreamCursor &cursor,
           else
             result.status = Status::FormatTooNew;
         }
+      }
+
+      // This field was added later; be resilient against its absence.
+      if (scratch.size() > 2) {
+        result.shortVersion = blobData.slice(0, scratch[2]);
       }
 
       versionSeen = true;
@@ -500,6 +507,9 @@ bool ModuleFile::readIndexBlock(llvm::BitstreamCursor &cursor) {
       case index_block::OPERATORS:
         OperatorDecls = readDeclTable(scratch, blobData);
         break;
+      case index_block::PRECEDENCE_GROUPS:
+        PrecedenceGroupDecls = readDeclTable(scratch, blobData);
+        break;
       case index_block::EXTENSIONS:
         ExtensionDecls = readDeclTable(scratch, blobData);
         break;
@@ -597,6 +607,7 @@ public:
     }
     result.Raw = RawComment(Comments);
     result.Group = endian::readNext<uint32_t, little, unaligned>(data);
+    result.SourceOrder = endian::readNext<uint32_t, little, unaligned>(data);
     return result;
   }
 };
@@ -620,7 +631,7 @@ ModuleFile::readGroupTable(ArrayRef<uint64_t> Fields, StringRef BlobData) {
     new ModuleFile::GroupNameTable);
   auto Data = reinterpret_cast<const uint8_t *>(BlobData.data());
   unsigned GroupCount = endian::readNext<uint32_t, little, unaligned>(Data);
-  for (unsigned I = 0; I < GroupCount; I ++) {
+  for (unsigned I = 0; I < GroupCount; I++) {
     auto RawSize = endian::readNext<uint32_t, little, unaligned>(Data);
     auto RawText = StringRef(reinterpret_cast<const char *>(Data), RawSize);
     Data += RawSize;
@@ -740,14 +751,15 @@ static bool isTargetTooNew(const llvm::Triple &moduleTarget,
 ModuleFile::ModuleFile(
     std::unique_ptr<llvm::MemoryBuffer> moduleInputBuffer,
     std::unique_ptr<llvm::MemoryBuffer> moduleDocInputBuffer,
-    bool isFramework,
+    bool isFramework, serialization::ValidationInfo &info,
     serialization::ExtendedValidationInfo *extInfo)
     : ModuleInputBuffer(std::move(moduleInputBuffer)),
       ModuleDocInputBuffer(std::move(moduleDocInputBuffer)),
       ModuleInputReader(getStartBytePtr(this->ModuleInputBuffer.get()),
                         getEndBytePtr(this->ModuleInputBuffer.get())),
       ModuleDocInputReader(getStartBytePtr(this->ModuleDocInputBuffer.get()),
-                           getEndBytePtr(this->ModuleDocInputBuffer.get())) {
+                           getEndBytePtr(this->ModuleDocInputBuffer.get())),
+      DeserializedTypeCallback([](Type ty) {}) {
   assert(getStatus() == Status::Valid);
   Bits.IsFramework = isFramework;
 
@@ -772,7 +784,7 @@ ModuleFile::ModuleFile(
     case CONTROL_BLOCK_ID: {
       cursor.EnterSubBlock(CONTROL_BLOCK_ID);
 
-      auto info = validateControlBlock(cursor, scratch, extInfo);
+      info = validateControlBlock(cursor, scratch, extInfo);
       if (info.status != Status::Valid) {
         error(info.status);
         return;
@@ -1081,7 +1093,7 @@ Status ModuleFile::associateWithFileContext(FileUnit *file,
              "invalid module name (submodules not yet supported)");
     }
     auto module = getModule(modulePath);
-    if (!module) {
+    if (!module || module->failedToLoad()) {
       // If we're missing the module we're shadowing, treat that specially.
       if (modulePath.size() == 1 &&
           modulePath.front() == file->getParentModule()->getName()) {
@@ -1194,6 +1206,21 @@ OperatorDecl *ModuleFile::lookupOperator(Identifier name, DeclKind fixity) {
   // FIXME: operators re-exported from other modules?
 
   return nullptr;
+}
+
+PrecedenceGroupDecl *ModuleFile::lookupPrecedenceGroup(Identifier name) {
+  PrettyModuleFileDeserialization stackEntry(*this);
+
+  if (!PrecedenceGroupDecls)
+    return nullptr;
+
+  auto iter = PrecedenceGroupDecls->find(name);
+  if (iter == PrecedenceGroupDecls->end())
+    return nullptr;
+
+  auto data = *iter;
+  assert(data.size() == 1);
+  return cast<PrecedenceGroupDecl>(getDecl(data[0].second));
 }
 
 void ModuleFile::getImportedModules(
@@ -1463,6 +1490,13 @@ ModuleFile::collectLinkLibraries(Module::LinkLibraryCallback callback) const {
 
 void ModuleFile::getTopLevelDecls(SmallVectorImpl<Decl *> &results) {
   PrettyModuleFileDeserialization stackEntry(*this);
+  if (PrecedenceGroupDecls) {
+    for (auto entry : PrecedenceGroupDecls->data()) {
+      for (auto item : entry)
+        results.push_back(getDecl(item.second));
+    }
+  }
+
   if (OperatorDecls) {
     for (auto entry : OperatorDecls->data()) {
       for (auto item : entry)
@@ -1524,6 +1558,17 @@ Optional<CommentInfo> ModuleFile::getCommentForDecl(const Decl *D) const {
   if (D->isImplicit())
     return None;
 
+  if (auto *ED = dyn_cast<ExtensionDecl>(D)) {
+    // Compute the USR.
+    llvm::SmallString<128> USRBuffer;
+    {
+      llvm::raw_svector_ostream OS(USRBuffer);
+      if (ide::printExtensionUSR(ED, OS))
+        return None;
+    }
+     return getCommentForDeclByUSR(USRBuffer.str());
+  }
+
   auto *VD = dyn_cast<ValueDecl>(D);
   if (!VD)
     return None;
@@ -1539,10 +1584,30 @@ Optional<CommentInfo> ModuleFile::getCommentForDecl(const Decl *D) const {
   return getCommentForDeclByUSR(USRBuffer.str());
 }
 
+const static StringRef Separator = "/";
+
 Optional<StringRef> ModuleFile::getGroupNameById(unsigned Id) const {
-  if(!GroupNamesMap || GroupNamesMap->count(Id) == 0)
+  if (!GroupNamesMap || GroupNamesMap->count(Id) == 0)
     return None;
-  return (*GroupNamesMap)[Id];
+  auto Original = (*GroupNamesMap)[Id];
+  if (Original.empty())
+    return None;
+  auto SepPos = Original.find_last_of(Separator);
+  assert(SepPos != StringRef::npos && "Cannot find Separator.");
+  return StringRef(Original.data(), SepPos);
+}
+
+Optional<StringRef> ModuleFile::getSourceFileNameById(unsigned Id) const {
+  if (!GroupNamesMap || GroupNamesMap->count(Id) == 0)
+    return None;
+  auto Original = (*GroupNamesMap)[Id];
+  if (Original.empty())
+    return None;
+  auto SepPos = Original.find_last_of(Separator);
+  assert(SepPos != StringRef::npos && "Cannot find Separator.");
+  auto Start = Original.data() + SepPos + 1;
+  auto Len = Original.size() - SepPos - 1;
+  return StringRef(Start, Len);
 }
 
 Optional<StringRef> ModuleFile::getGroupNameForDecl(const Decl *D) const {
@@ -1553,11 +1618,39 @@ Optional<StringRef> ModuleFile::getGroupNameForDecl(const Decl *D) const {
   return getGroupNameById(Triple.getValue().Group);
 }
 
+
+Optional<StringRef>
+ModuleFile::getSourceFileNameForDecl(const Decl *D) const {
+  auto Triple = getCommentForDecl(D);
+  if (!Triple.hasValue()) {
+    return None;
+  }
+  return getSourceFileNameById(Triple.getValue().Group);
+}
+
+Optional<unsigned>
+ModuleFile::getSourceOrderForDecl(const Decl *D) const {
+  auto Triple = getCommentForDecl(D);
+  if (!Triple.hasValue()) {
+    return None;
+  }
+  return Triple.getValue().SourceOrder;
+}
+
 void ModuleFile::collectAllGroups(std::vector<StringRef> &Names) const {
   if (!GroupNamesMap)
     return;
   for (auto It = GroupNamesMap->begin(); It != GroupNamesMap->end(); ++ It) {
-    Names.push_back(It->getSecond());
+    StringRef FullGroupName = It->getSecond();
+    if (FullGroupName.empty())
+      continue;
+    auto Sep = FullGroupName.find_last_of(Separator);
+    assert(Sep != StringRef::npos);
+    auto Group = FullGroupName.substr(0, Sep);
+    auto Found = std::find(Names.begin(), Names.end(), Group);
+    if (Found != Names.end())
+      continue;
+    Names.push_back(Group);
   }
 }
 
@@ -1571,6 +1664,14 @@ ModuleFile::getCommentForDeclByUSR(StringRef USR) const {
     return None;
 
   return *I;
+}
+
+Optional<StringRef>
+ModuleFile::getGroupNameByUSR(StringRef USR) const {
+  if (auto Comment = getCommentForDeclByUSR(USR)) {
+    return getGroupNameById(Comment.getValue().Group);
+  }
+  return None;
 }
 
 Identifier ModuleFile::getDiscriminatorForPrivateValue(const ValueDecl *D) {

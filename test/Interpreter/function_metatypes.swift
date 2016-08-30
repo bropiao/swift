@@ -1,8 +1,8 @@
-// RUN: %target-run-simple-swift | FileCheck %s
+// RUN: %target-run-simple-swift | %FileCheck %s
 // REQUIRES: executable_test
 
 protocol ProtocolHasInOut {
-  typealias Input
+  associatedtype Input
   typealias Mutator = (inout Input) -> ()
   var f: Mutator { get }
 }
@@ -17,7 +17,7 @@ struct HasInOutProtocol : ProtocolHasInOut {
   let f: (inout Input) -> ()
 }
 
-func foo<T>(t: T.Type) -> Any {
+func foo<T>(_ t: T.Type) -> Any {
   return { (x: T) -> Int in return 6060 }
 }
 
@@ -43,8 +43,8 @@ hiop.f(&i)
 print(i)
 // CHECK: 4040
 
-func fooInOut<T>(t: T.Type) -> Any {
-  return { (x: inout T) -> () in x = unsafeBitCast((8080, 9090), T.self) }
+func fooInOut<T>(_ t: T.Type) -> Any {
+  return { (x: inout T) -> () in x = unsafeBitCast((8080, 9090), to: T.self) }
 }
 
 var fio = fooInOut((Int, Int).self)

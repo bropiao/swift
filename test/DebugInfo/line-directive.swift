@@ -1,18 +1,18 @@
-func markUsed<T>(t: T) {}
+func markUsed<T>(_ t: T) {}
 func f() {
   if 1==1 {
-#setline 42 "abc.swift"
+#sourceLocation(file: "abc.swift", line: 42)
     markUsed("Hello World")
-#setline
+#sourceLocation()
   }
   markUsed("Test")
-#setline 142 "abc.swift"
+#sourceLocation(file: "abc.swift", line: 142)
   markUsed("abc again")
-#setline 142 "def.swift"
+#sourceLocation(file: "def.swift", line:  142)
   markUsed("jump directly to def")
 }
 
-// RUN: %target-swift-frontend -primary-file %s -S -g -o - | FileCheck %s
+// RUN: %target-swift-frontend -primary-file %s -S -g -o - | %FileCheck %s
 // CHECK: .file	[[MAIN:.*]] "{{.*}}line-directive.swift"
 // CHECK: .loc	[[MAIN]] 1
 // CHECK: .file	[[ABC:.*]] "abc.swift"

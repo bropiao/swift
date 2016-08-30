@@ -99,6 +99,13 @@ bool swift::ArraySemanticsCall::isValidSignature() {
     }
     return true;
   }
+  case ArrayCallKind::kWithUnsafeMutableBufferPointer: {
+    if (SemanticsCall->getOrigCalleeType()->getNumIndirectResults() != 1 ||
+        SemanticsCall->getNumArguments() != 3)
+      return false;
+    auto SelfConvention = FnTy->getSelfParameter().getConvention();
+    return SelfConvention == ParameterConvention::Indirect_Inout;
+  }
   }
 
   return true;
@@ -155,6 +162,7 @@ ArrayCallKind swift::ArraySemanticsCall::getKind() const {
             .Case("array.get_element_address",
                   ArrayCallKind::kGetElementAddress)
             .Case("array.mutate_unknown", ArrayCallKind::kMutateUnknown)
+            .Case("array.withUnsafeMutableBufferPointer", ArrayCallKind::kWithUnsafeMutableBufferPointer)
             .Default(ArrayCallKind::kNone);
     if (Tmp != ArrayCallKind::kNone) {
       assert(Kind == ArrayCallKind::kNone && "Multiple array semantic "
@@ -368,14 +376,15 @@ static SILValue hoistOrCopySelf(ApplyInst *SemanticsCall,
   // Emit matching release for owned self if we are moving the original call.
   if (!LeaveOriginal && IsOwnedSelf)
     SILBuilderWithScope(SemanticsCall)
-        .createReleaseValue(SemanticsCall->getLoc(), Self);
+        .createReleaseValue(SemanticsCall->getLoc(), Self, Atomicity::Atomic);
 
   auto NewArrayStructValue = copyArrayLoad(Self, InsertBefore, DT);
 
   // Retain the array.
   if (IsOwnedSelf)
     SILBuilderWithScope(InsertBefore, SemanticsCall)
-      .createRetainValue(SemanticsCall->getLoc(), NewArrayStructValue);
+        .createRetainValue(SemanticsCall->getLoc(), NewArrayStructValue,
+                           Atomicity::Atomic);
 
   return NewArrayStructValue;
 }
@@ -470,7 +479,8 @@ void swift::ArraySemanticsCall::removeCall() {
   if (getSelfParameterConvention(SemanticsCall) ==
       ParameterConvention::Direct_Owned)
     SILBuilderWithScope(SemanticsCall)
-        .createReleaseValue(SemanticsCall->getLoc(), getSelf());
+        .createReleaseValue(SemanticsCall->getLoc(), getSelf(),
+                            Atomicity::Atomic);
 
   switch (getKind()) {
   default: break;
@@ -604,7 +614,7 @@ SILValue swift::ArraySemanticsCall::getArrayValue() const {
     return SILValue(ArrayDef);
   }
 
-  if(getKind() == ArrayCallKind::kArrayInit)
+  if (getKind() == ArrayCallKind::kArrayInit)
     return SILValue(SemanticsCall);
 
   return SILValue();

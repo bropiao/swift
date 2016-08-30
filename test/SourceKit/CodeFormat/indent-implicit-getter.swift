@@ -24,6 +24,9 @@ class var foo: Int {
   return 1
   }
 }
+// REQUIRES: disabled
+// FIXME: may be crashing non-deterministically
+
 // RUN: %sourcekitd-test -req=format -line=1 -length=1 %s >%t.response
 // RUN: %sourcekitd-test -req=format -line=2 -length=1 %s >>%t.response
 // RUN: %sourcekitd-test -req=format -line=3 -length=1 %s >>%t.response
@@ -44,7 +47,7 @@ class var foo: Int {
 // RUN: %sourcekitd-test -req=format -line=20 -length=1 %s >>%t.response
 // RUN: %sourcekitd-test -req=format -line=23 -length=1 %s >>%t.response
 
-// RUN: FileCheck --strict-whitespace %s <%t.response
+// RUN: %FileCheck --strict-whitespace %s <%t.response
 
 // CHECK: key.sourcetext: "class Foo {"
 // CHECK: key.sourcetext: "    var test: Int {"

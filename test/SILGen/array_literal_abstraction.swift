@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend -emit-silgen %s | FileCheck %s
+// RUN: %target-swift-frontend -emit-silgen %s | %FileCheck %s
 
 // Verify that reabstraction happens when forming container literals.
 // <rdar://problem/16039286>
@@ -15,7 +15,7 @@ func dict_of_funcs() -> Dictionary<Int, () -> ()> {
   return [0: {}, 1: {}]
 }
 
-func vararg_funcs(fs: (() -> ())...) {}
+func vararg_funcs(_ fs: (() -> ())...) {}
 
 // CHECK-LABEL: sil hidden @_TF25array_literal_abstraction17call_vararg_funcsFT_T_
 // CHECK:         pointer_to_address {{.*}} $*@callee_owned (@in ()) -> @out ()

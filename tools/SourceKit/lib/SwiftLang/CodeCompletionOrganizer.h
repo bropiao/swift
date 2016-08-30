@@ -29,7 +29,7 @@ struct Options {
   bool useImportDepth = true;
   bool groupOverloads = false;
   bool groupStems = false;
-  bool includeExactMatch = false;
+  bool includeExactMatch = true;
   bool addInnerResults = false;
   bool addInnerOperators = true;
   bool addInitsToTopLevel = false;
@@ -41,13 +41,10 @@ struct Options {
   unsigned minFuzzyLength = 2;
   unsigned showTopNonLiteralResults = 3;
 
-  // Options for combining priorities. The defaults are chosen so that a fuzzy
-  // match just breaks ties within a semantic context.  If semanticContextWeight
-  // isn't modified, a fuzzyMatchWeight of N means that a perfect match is worth
-  // the same as the worst possible match N/10 "contexts" ahead of it.
-  unsigned semanticContextWeight = 10 * Completion::numSemanticContexts;
-  unsigned fuzzyMatchWeight = 9;
-  unsigned popularityBonus = 9;
+  // Options for combining priorities.
+  unsigned semanticContextWeight = 15;
+  unsigned fuzzyMatchWeight = 10;
+  unsigned popularityBonus = 2;
 };
 
 struct SwiftCompletionInfo {

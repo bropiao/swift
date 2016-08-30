@@ -16,7 +16,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "swift/Runtime/Concurrent.h"
 #include "swift/Runtime/Metadata.h"
-#include <mutex>
+#include "swift/Runtime/Mutex.h"
 #include <condition_variable>
 #include <thread>
 
@@ -25,6 +25,31 @@
 #endif
 
 namespace swift {
+
+/// A bump pointer for metadata allocations. Since metadata is (currently)
+/// never released, it does not support deallocation. This allocator by itself
+/// is not thread-safe; in concurrent uses, allocations must be guarded by
+/// a lock, such as the per-metadata-cache lock used to guard metadata
+/// instantiations. All allocations are pointer-aligned.
+class MetadataAllocator {
+  /// Address of the next available space. The allocator grabs a page at a time,
+  /// so the need for a new page can be determined by page alignment.
+  ///
+  /// Initializing to -1 instead of nullptr ensures that the first allocation
+  /// triggers a page allocation since it will always span a "page" boundary.
+  std::atomic<uintptr_t> NextValue;
+  
+public:
+  constexpr MetadataAllocator() : NextValue(~(uintptr_t)0) {}
+
+  // Don't copy or move, please.
+  MetadataAllocator(const MetadataAllocator &) = delete;
+  MetadataAllocator(MetadataAllocator &&) = delete;
+  MetadataAllocator &operator=(const MetadataAllocator &) = delete;
+  MetadataAllocator &operator=(MetadataAllocator &&) = delete;
+  
+  void *alloc(size_t size);
+};
 
 // A wrapper around a pointer to a metadata cache entry that provides
 // DenseMap semantics that compare values in the key vector for the metadata
@@ -100,13 +125,7 @@ public:
 };
 
 template <class Impl>
-struct CacheEntryHeader {
-  /// LLDB walks this list.
-  /// FIXME: when LLDB stops walking this list, there will stop being
-  /// any reason to store argument data in cache entries, and a *ton*
-  /// of weird stuff here will go away.
-  const Impl *Next;
-};
+struct CacheEntryHeader {};
 
 /// A CRTP class for defining entries in a metadata cache.
 template <class Impl, class Header = CacheEntryHeader<Impl> >
@@ -247,14 +266,9 @@ template <class ValueTy> class MetadataCache {
   static_assert(sizeof(Map) == 2 * sizeof(void*),
                 "offset of Head is not at proper offset");
 
-  /// The head of a linked list connecting all the metadata cache entries.
-  /// TODO: Remove this when LLDB is able to understand the final data
-  /// structure for the metadata cache.
-  const ValueTy *Head;
-
   struct ConcurrencyControl {
-    std::mutex Lock;
-    std::condition_variable Queue;
+    Mutex Lock;
+    ConditionVariable Queue;
   };
   std::unique_ptr<ConcurrencyControl> Concurrency;
 
@@ -303,17 +317,19 @@ public:
     if (!insertResult.second) {
 
       // If the entry is already initialized, great.
-      if (auto value = entry->getValue())
+      auto value = entry->getValue();
+      if (value) {
         return value;
+      }
 
       // Otherwise, we have to grab the lock and wait for the value to
       // appear there.  Note that we have to check again immediately
       // after acquiring the lock to prevent a race.
       auto concurrency = Concurrency.get();
-      std::unique_lock<std::mutex> guard(concurrency->Lock);
-      while (true) {
-        if (auto value = entry->getValue())
-          return value;
+      concurrency->Lock.withLockOrWait(concurrency->Queue, [&, this] {
+        if ((value = entry->getValue())) {
+          return true; // found a value, done waiting
+        }
 
         // As a QoI safe-guard against the simplest form of cyclic
         // dependency, check whether this thread is the one responsible
@@ -325,17 +341,15 @@ public:
           abort();
         }
 
-        concurrency->Queue.wait(guard);
-      }
+        return false; // don't have a value, continue waiting
+      });
+
+      return value;
     }
 
     // Otherwise, we created the entry and are responsible for
     // creating the metadata.
     auto value = builder();
-
-    // Update the linked list.
-    value->Next = Head;
-    Head = value;
 
 #if SWIFT_DEBUG_RUNTIME
         printf("%s(%p): created %p\n",
@@ -343,12 +357,9 @@ public:
 #endif
 
     // Acquire the lock, set the value, and notify any waiters.
-    {
-      auto concurrency = Concurrency.get();
-      std::unique_lock<std::mutex> guard(concurrency->Lock);
-      entry->setValue(value);
-      concurrency->Queue.notify_all();
-    }
+    auto concurrency = Concurrency.get();
+    concurrency->Lock.withLockThenNotifyAll(
+        concurrency->Queue, [&entry, &value] { entry->setValue(value); });
 
     return value;
   }

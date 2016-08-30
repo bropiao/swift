@@ -103,12 +103,6 @@ void SILBasicBlock::eraseFromParent() {
   getParent()->getBlocks().erase(this);
 }
 
-/// This method unlinks 'self' from the containing SILFunction.
-void SILBasicBlock::removeFromParent() {
-  getParent()->getBlocks().remove(this);
-}
-
-
 /// Replace the ith BB argument with a new one with type Ty (and optional
 /// ValueDecl D).
 SILArgument *SILBasicBlock::replaceBBArg(unsigned i, SILType Ty,
@@ -141,6 +135,8 @@ SILArgument *SILBasicBlock::insertBBArg(bbarg_iterator Iter, SILType Ty,
 }
 
 void SILBasicBlock::eraseBBArg(int Index) {
+  assert(getBBArg(Index)->use_empty() &&
+         "Erasing block argument that has uses!");
   // Notify the delete handlers that this BB argument is going away.
   getModule().notifyDeleteHandlers(getBBArg(Index));
   BBArgList.erase(BBArgList.begin() + Index);

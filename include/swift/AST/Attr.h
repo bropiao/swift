@@ -23,6 +23,7 @@
 #include "swift/Basic/Range.h"
 #include "swift/AST/Identifier.h"
 #include "swift/AST/AttrKind.h"
+#include "swift/AST/ConcreteDeclRef.h"
 #include "swift/AST/KnownProtocols.h"
 #include "swift/AST/Ownership.h"
 #include "swift/AST/PlatformKind.h"
@@ -38,68 +39,7 @@ class ASTContext;
 struct PrintOptions;
 class Decl;
 class ClassDecl;
-
-class InfixData {
-  unsigned Precedence : 8;
-
-  /// Zero if invalid, or else an Associativity+1.
-  unsigned InvalidOrAssoc : 2;
-  
-  unsigned Assignment : 1;
-  
-public:
-  InfixData() : Precedence(0), InvalidOrAssoc(0), Assignment(0) {}
-  InfixData(unsigned char prec, Associativity assoc, bool isAssignment)
-    : Precedence(prec), InvalidOrAssoc(unsigned(assoc) + 1),
-      Assignment((unsigned)isAssignment) {}
-
-  bool isValid() const { return InvalidOrAssoc != 0; }
-
-  Associativity getAssociativity() const {
-    assert(isValid());
-    return Associativity(InvalidOrAssoc - 1);
-  }
-  bool isLeftAssociative() const {
-    return getAssociativity() == Associativity::Left;
-  }
-  bool isRightAssociative() const {
-    return getAssociativity() == Associativity::Right;
-  }
-  bool isNonAssociative() const {
-    return getAssociativity() == Associativity::None;
-  }
-
-  unsigned getPrecedence() const {
-    assert(isValid());
-    return Precedence;
-  }
-  
-  bool isAssignment() const {
-    assert(isValid());
-    return (bool)Assignment;
-  }
-
-  friend bool operator==(InfixData L, InfixData R) {
-    return L.Precedence == R.Precedence
-        && L.InvalidOrAssoc == R.InvalidOrAssoc
-        && L.Assignment == R.Assignment;
-  }
-  friend bool operator!=(InfixData L, InfixData R) {
-    return !operator==(L, R);
-  }
-};
-
-namespace IntrinsicPrecedences {
-  enum : unsigned char {
-    MinPrecedence = 0,
-    IfExpr = 100, // ?:
-    AssignExpr = 90, // =
-    ExplicitCastExpr = 132, // 'is' and 'as'
-    PrefixUnaryExpr = 254,
-    PostfixUnaryExpr = 255,
-    MaxPrecedence = 255
-  };
-}
+struct TypeLoc;
 
 /// TypeAttributes - These are attributes that may be applied to types.
 class TypeAttributes {
@@ -149,7 +89,8 @@ public:
   // an empty list.
   bool empty() const {
     for (SourceLoc elt : AttrLocs)
-      if (elt.isValid()) return false;
+      if (elt.isValid())
+        return false;
     
     return true;
   }
@@ -178,6 +119,9 @@ public:
   /// corresponds to it.  This returns TAK_Count on failure.
   ///
   static TypeAttrKind getAttrKindFromString(StringRef Str);
+
+  /// Return the name (like "autoclosure") for an attribute ID.
+  static const char *getAttrName(TypeAttrKind kind);
 };
 
 class AttributeBase {
@@ -257,9 +201,9 @@ protected:
     friend class AbstractAccessibilityAttr;
     unsigned : NumDeclAttrBits;
 
-    unsigned AccessLevel : 2;
+    unsigned AccessLevel : 3;
   };
-  enum { NumAccessibilityAttrBits = NumDeclAttrBits + 2 };
+  enum { NumAccessibilityAttrBits = NumDeclAttrBits + 3 };
   static_assert(NumAccessibilityAttrBits <= 32, "fits in an unsigned");
 
   class AutoClosureAttrBitFields {
@@ -317,6 +261,7 @@ public:
     // There is one entry for each DeclKind here, and some higher level buckets
     // down below.  These are used in Attr.def to control which kinds of
     // declarations an attribute can be attached to.
+    OnPrecedenceGroup  = 1 << 7,
     OnImport           = 1 << 8,
     OnExtension        = 1 << 9,
     OnPatternBinding   = 1 << 10,
@@ -352,7 +297,8 @@ public:
                 OnTopLevelCode|OnIfConfig|OnInfixOperator|OnPrefixOperator|
                 OnPostfixOperator|OnEnum|OnStruct|OnClass|OnProtocol|
                 OnTypeAlias|OnVar|OnSubscript|OnConstructor|OnDestructor|
-                OnFunc|OnEnumElement|OnGenericTypeParam|OnAssociatedType|OnParam
+                OnFunc|OnEnumElement|OnGenericTypeParam|OnAssociatedType|
+                OnParam|OnPrecedenceGroup
   };
 
   static unsigned getOptions(DeclAttrKind DK);
@@ -360,6 +306,10 @@ public:
   unsigned getOptions() const {
     return getOptions(getKind());
   }
+
+  /// Prints this attribute (if applicable), returning `true` if anything was
+  /// printed.
+  bool printImpl(ASTPrinter &Printer, const PrintOptions &Options) const;
 
 public:
   DeclAttrKind getKind() const {
@@ -512,6 +462,24 @@ public:
   }
 };
 
+/// Defines the @_cdecl attribute.
+class CDeclAttr : public DeclAttribute {
+public:
+  CDeclAttr(StringRef Name, SourceLoc AtLoc, SourceRange Range, bool Implicit)
+    : DeclAttribute(DAK_CDecl, AtLoc, Range, Implicit),
+      Name(Name) {}
+
+  CDeclAttr(StringRef Name, bool Implicit)
+    : CDeclAttr(Name, SourceLoc(), SourceRange(), /*Implicit=*/true) {}
+
+  /// The symbol name.
+  const StringRef Name;
+
+  static bool classof(const DeclAttribute *DA) {
+    return DA->getKind() == DAK_CDecl;
+  }
+};
+
 /// Defines the @_semantics attribute.
 class SemanticsAttr : public DeclAttribute {
 public:
@@ -592,9 +560,16 @@ enum class MinVersionComparison {
 
 /// Describes the unconditional availability of a declaration.
 enum class UnconditionalAvailabilityKind {
+  /// The declaration is not unconditionally unavailable.
   None,
+  /// The declaration is deprecated, but can still be used.
   Deprecated,
+  /// The declaration is unavailable in Swift, specifically
   UnavailableInSwift,
+  /// The declaration is unavailable in the current version of Swift,
+  /// but was available in previous Swift versions.
+  UnavailableInCurrentSwift,
+  /// The declaration is unavailable for other reasons.
   Unavailable,
 };
 
@@ -628,6 +603,10 @@ public:
 
   /// An optional replacement string to emit in a fixit.  This allows simple
   /// declaration renames to be applied by Xcode.
+  ///
+  /// This should take the form of an operator, identifier, or full function
+  /// name, optionally with a prefixed type, similar to the syntax used for
+  /// the `NS_SWIFT_NAME` annotation in Objective-C.
   const StringRef Rename;
 
   /// Indicates when the symbol was introduced.
@@ -1039,78 +1018,33 @@ public:
   }
 };
 
-/// The @warn_unused_result attribute, which specifies that we should
-/// receive a warning if a function is called but its result is
-/// unused.
-///
-/// The @warn_unused_result attribute can optionally be provided with
-/// a message and a mutable variant. For example:
-///
-/// \code
-/// struct X {
-///   @warn_unused_result(message="this string affects your health")
-///   func methodA() -> String { ... }
-///
-///   @warn_unused_result(mutable_variant="jumpInPlace")
-///   func jump() -> X { ... }
-///
-///   mutating func jumpInPlace() { ... }
-/// }
-/// \endcode
-class WarnUnusedResultAttr : public DeclAttribute {
-  /// The optional message.
-  const StringRef Message;
+/// The @_specialize attribute, which forces specialization on the specified
+/// type list.
+class SpecializeAttr : public DeclAttribute {
+  unsigned numTypes;
+  ConcreteDeclRef specializedDecl;
 
-  /// An optional name of the mutable variant of the given method,
-  /// which will be suggested as a replacement if it can be called.
-  const StringRef MutableVariant;
-
-public:
-  /// A @warn_unused_result attribute with no options.
-  WarnUnusedResultAttr(SourceLoc atLoc, SourceLoc attrLoc, bool implicit)
-    : DeclAttribute(DAK_WarnUnusedResult, atLoc, SourceRange(atLoc, attrLoc),
-                    implicit),
-      Message(""), MutableVariant("") { }
-
-  /// A @warn_unused_result attribute with a message or mutable variant.
-  WarnUnusedResultAttr(SourceLoc atLoc, SourceLoc attrLoc, SourceLoc lParenLoc,
-                       StringRef message, StringRef mutableVariant,
-                       SourceLoc rParenLoc, bool implicit)
-    : DeclAttribute(DAK_WarnUnusedResult, attrLoc,
-                    SourceRange(atLoc, rParenLoc),
-                    implicit),
-      Message(message), MutableVariant(mutableVariant) { }
-
-  /// Retrieve the message associated with this attribute.
-  StringRef getMessage() const { return Message; }
-
-  /// Retrieve the name of the mutable variant of this method.
-  StringRef getMutableVariant() const { return MutableVariant; }
-
-  static bool classof(const DeclAttribute *DA) {
-    return DA->getKind() == DAK_WarnUnusedResult;
+  TypeLoc *getTypeLocData() {
+    return reinterpret_cast<TypeLoc *>(this + 1);
   }
-};
 
-/// The @swift3_migration attribute which describes the transformations
-/// required to migrate the given Swift 2.x API to Swift 3.
-class Swift3MigrationAttr : public DeclAttribute {
-  DeclName Renamed;
-  StringRef Message;
+  SpecializeAttr(SourceLoc atLoc, SourceRange Range,
+                 ArrayRef<TypeLoc> typeLocs);
 
 public:
-  Swift3MigrationAttr(SourceLoc atLoc, SourceLoc attrLoc, SourceLoc lParenLoc,
-                      DeclName renamed, StringRef message, SourceLoc rParenLoc,
-                      bool implicit)
-    : DeclAttribute(DAK_Swift3Migration, atLoc, SourceRange(attrLoc, rParenLoc),
-                    implicit),
-      Renamed(renamed), Message(message) { }
+  static SpecializeAttr *create(ASTContext &Ctx, SourceLoc atLoc,
+                                SourceRange Range, ArrayRef<TypeLoc> typeLocs);
 
-  DeclName getRenamed() const { return Renamed; }
-  StringRef getMessage() const { return Message; }
+  ArrayRef<TypeLoc> getTypeLocs() const;
+
+  MutableArrayRef<TypeLoc> getTypeLocs();
+
+  ConcreteDeclRef getConcreteDecl() const { return specializedDecl; }
+
+  void setConcreteDecl(ConcreteDeclRef ref) { specializedDecl = ref; }
 
   static bool classof(const DeclAttribute *DA) {
-    return DA->getKind() == DAK_Swift3Migration;
+    return DA->getKind() == DAK_Specialize;
   }
 };
 
@@ -1146,6 +1080,10 @@ public:
   bool isUnavailable(const ASTContext &ctx) const {
     return getUnavailable(ctx) != nullptr;
   }
+
+  /// Determine whether there is an "unavailable in current Swift"
+  /// attribute.
+  bool isUnavailableInCurrentSwift() const;
 
   /// Returns the first @available attribute that indicates
   /// a declaration is unavailable, or null otherwise.
@@ -1229,10 +1167,10 @@ private:
   template <typename ATTR, bool AllowInvalid> struct ToAttributeKind {
     ToAttributeKind() {}
 
-    Optional<const DeclAttribute *>
+    Optional<const ATTR *>
     operator()(const DeclAttribute *Attr) const {
       if (isa<ATTR>(Attr) && (Attr->isValid() || AllowInvalid))
-        return Attr;
+        return cast<ATTR>(Attr);
       return None;
     }
   };

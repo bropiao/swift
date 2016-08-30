@@ -96,10 +96,17 @@ namespace swift {
 
     void injectFunction(SILFunction *Func) { F = Func; }
 
-    /// \brief Notify the pass manager of a function that needs to be
-    /// processed by the function passes.
-    void notifyPassManagerOfFunction(SILFunction *F) {
-      PM->addFunctionToWorklist(F);
+    /// \brief Notify the pass manager of a function \p F that needs to be
+    /// processed by the function passes and the analyses.
+    ///
+    /// If not null, the function \p DerivedFrom is the function from which \p F
+    /// is derived. This is used to limit the number of new functions which are
+    /// derived from a common base function, e.g. due to specialization.
+    /// The number should be small anyway, but bugs in optimizations could cause
+    /// an infinite loop in the passmanager.
+    void notifyPassManagerOfFunction(SILFunction *F, SILFunction *DerivedFrom) {
+      PM->addFunctionToWorklist(F, DerivedFrom);
+      PM->notifyAnalysisOfFunction(F);
     }
 
     /// \brief Reoptimize the current function by restarting the pass
@@ -144,8 +151,13 @@ namespace swift {
       PM->invalidateAnalysis(F, K);
     }
 
+    /// Invalidate only the function \p F, using invalidation information \p K.
+    /// But we also know this function is going to be dead.
+    void invalidateAnalysisForDeadFunction(SILFunction *F,
+                                           SILAnalysis::InvalidationKind K) {
+      PM->invalidateAnalysisForDeadFunction(F, K);
+    }
   };
-
 } // end namespace swift
 
 #endif

@@ -1,4 +1,4 @@
-// RUN: %target-run-simple-swift | FileCheck %s
+// RUN: %target-run-simple-swift | %FileCheck %s
 // REQUIRES: executable_test
 
 // REQUIRES: objc_interop
@@ -30,7 +30,7 @@ extension Z {
 }
 
 
-func test_dynamic_lookup_f(obj: AnyObject) {
+func test_dynamic_lookup_f(_ obj: AnyObject) {
   var of = obj.f
   if of != nil {
     of!()
@@ -39,8 +39,8 @@ func test_dynamic_lookup_f(obj: AnyObject) {
   }
 }
 
-func test_dynamic_lookup_g(obj: AnyObject) {
-  var og = obj.dynamicType.g
+func test_dynamic_lookup_g(_ obj: AnyObject) {
+  var og = type(of: obj).g
   if og != nil {
     og!()
   } else {
@@ -48,7 +48,7 @@ func test_dynamic_lookup_g(obj: AnyObject) {
   }
 }
 
-func test_dynamic_lookup_myValue(obj: AnyObject) {
+func test_dynamic_lookup_myValue(_ obj: AnyObject) {
   var ov = obj.myValue
   if ov != nil {
     print("myValue = \(ov!)")

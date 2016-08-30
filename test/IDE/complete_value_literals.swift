@@ -1,30 +1,33 @@
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=NO_CONTEXT_0 | FileCheck %s -check-prefix=NO_CONTEXT_0
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=NIL_0 | FileCheck %s -check-prefix=NIL_0
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=NIL_1 | FileCheck %s -check-prefix=NIL_1
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=NIL_2 | FileCheck %s -check-prefix=NIL_2
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=BOOL_0 | FileCheck %s -check-prefix=BOOL_0
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=BOOL_1 | FileCheck %s -check-prefix=BOOL_1
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=BOOL_2 | FileCheck %s -check-prefix=BOOL_2
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=INT_0 | FileCheck %s -check-prefix=INT_0
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=INT_1 | FileCheck %s -check-prefix=INT_1
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=INT_2 | FileCheck %s -check-prefix=INT_2
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=DOUBLE_0 | FileCheck %s -check-prefix=DOUBLE_0
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=STRING_0 | FileCheck %s -check-prefix=STRING_0
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=STRING_1 | FileCheck %s -check-prefix=STRING_1
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=STRING_2 | FileCheck %s -check-prefix=STRING_2
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=ARRAY_0 | FileCheck %s -check-prefix=ARRAY_0
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=ARRAY_1 | FileCheck %s -check-prefix=ARRAY_1
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=ARRAY_2 | FileCheck %s -check-prefix=ARRAY_2
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=DICT_0 | FileCheck %s -check-prefix=DICT_0
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=DICT_1 | FileCheck %s -check-prefix=DICT_1
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=DICT_2 | FileCheck %s -check-prefix=DICT_2
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=TUPLE_0 | FileCheck %s -check-prefix=TUPLE_0
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=TUPLE_1 | FileCheck %s -check-prefix=TUPLE_1
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=TUPLE_2 | FileCheck %s -check-prefix=TUPLE_2
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=COLOR_0 | FileCheck %s -check-prefix=COLOR_0
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=COLOR_1 | FileCheck %s -check-prefix=COLOR_1
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=IMAGE_0 | FileCheck %s -check-prefix=IMAGE_0
-// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=IMAGE_1 | FileCheck %s -check-prefix=IMAGE_1
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=NO_CONTEXT_0 | %FileCheck %s -check-prefix=NO_CONTEXT_0
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=NIL_0 | %FileCheck %s -check-prefix=NIL_0
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=NIL_1 | %FileCheck %s -check-prefix=NIL_1
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=NIL_2 | %FileCheck %s -check-prefix=NIL_2
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=BOOL_0 | %FileCheck %s -check-prefix=BOOL_0
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=BOOL_1 | %FileCheck %s -check-prefix=BOOL_1
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=BOOL_2 | %FileCheck %s -check-prefix=BOOL_2
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=BOOL_3 | %FileCheck %s -check-prefix=BOOL_3
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=BOOL_4 | %FileCheck %s -check-prefix=BOOL_4
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=INT_0 | %FileCheck %s -check-prefix=INT_0
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=INT_1 | %FileCheck %s -check-prefix=INT_1
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=INT_2 | %FileCheck %s -check-prefix=INT_2
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=DOUBLE_0 | %FileCheck %s -check-prefix=DOUBLE_0
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=STRING_0 | %FileCheck %s -check-prefix=STRING_0
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=STRING_1 | %FileCheck %s -check-prefix=STRING_1
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=STRING_2 | %FileCheck %s -check-prefix=STRING_2
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=ARRAY_0 | %FileCheck %s -check-prefix=ARRAY_0
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=ARRAY_1 | %FileCheck %s -check-prefix=ARRAY_1
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=ARRAY_2 | %FileCheck %s -check-prefix=ARRAY_2
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=DICT_0 | %FileCheck %s -check-prefix=DICT_0
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=DICT_1 | %FileCheck %s -check-prefix=DICT_1
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=DICT_2 | %FileCheck %s -check-prefix=DICT_2
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=TUPLE_0 | %FileCheck %s -check-prefix=TUPLE_0
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=TUPLE_1 | %FileCheck %s -check-prefix=TUPLE_1
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=TUPLE_2 | %FileCheck %s -check-prefix=TUPLE_2
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=COLOR_0 | %FileCheck %s -check-prefix=COLOR_0
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=COLOR_1 | %FileCheck %s -check-prefix=COLOR_1
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=COLOR_2 | %FileCheck %s -check-prefix=COLOR_2
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=IMAGE_0 | %FileCheck %s -check-prefix=IMAGE_0
+// RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-completion-token=IMAGE_1 | %FileCheck %s -check-prefix=IMAGE_1
 
 func testAll0() {
   // Not type context.
@@ -37,32 +40,32 @@ func testAll0() {
 // NO_CONTEXT_0-DAG: Literal[String]/None:               "{#(abc)#}"[#String#];
 // NO_CONTEXT_0-DAG: Literal[Array]/None:                [{#(values)#}][#Array#];
 // NO_CONTEXT_0-DAG: Literal[Dictionary]/None:           [{#(key)#}: {#(value)#}][#Dictionary#];
-// NO_CONTEXT_0-DAG: Literal[_Color]/None:               [#Color({#colorLiteralRed: Float#}, {#green: Float#}, {#blue: Float#}, {#alpha: Float#})#];
-// NO_CONTEXT_0-DAG: Literal[_Image]/None:               [#Image({#imageLiteral: String#})#];
+// NO_CONTEXT_0-DAG: Literal[_Color]/None:               #colorLiteral({#red: Float#}, {#green: Float#}, {#blue: Float#}, {#alpha: Float#});
+// NO_CONTEXT_0-DAG: Literal[_Image]/None:               #imageLiteral({#resourceName: String#});
 // NO_CONTEXT_0: End completions
 }
 
-struct MyNil1: NilLiteralConvertible {
+struct MyNil1: ExpressibleByNilLiteral {
   init(nilLiteral: ()) {}
 }
-struct MyBool1: BooleanLiteralConvertible {
+struct MyBool1: ExpressibleByBooleanLiteral {
   init(booleanLiteral value: Bool) {}
 }
-struct MyInt1: IntegerLiteralConvertible {
+struct MyInt1: ExpressibleByIntegerLiteral {
   init(integerLiteral value: Int) {}
 }
-struct MyDouble1: FloatLiteralConvertible {
+struct MyDouble1: ExpressibleByFloatLiteral {
   init(floatLiteral value: Double) {}
 }
-struct MyString1: StringLiteralConvertible {
+struct MyString1: ExpressibleByStringLiteral {
   init(unicodeScalarLiteral value: Character) {}
   init(extendedGraphemeClusterLiteral value: String) {}
   init(stringLiteral value: String) {}
 }
-struct MyArray1<Element>: ArrayLiteralConvertible {
+struct MyArray1<Element>: ExpressibleByArrayLiteral {
   init(arrayLiteral value: Element...) {}
 }
-struct MyDict1<Key, Value>: DictionaryLiteralConvertible {
+struct MyDict1<Key, Value>: ExpressibleByDictionaryLiteral {
   init(dictionaryLiteral elements: (Key, Value)...) {}
 }
 
@@ -103,6 +106,18 @@ func testBool2() {
 }
 // BOOL_2: Literal[Boolean]/None/TypeRelation[Identical]: true[#Bool#];
 // BOOL_2: Literal[Boolean]/None/TypeRelation[Identical]: false[#Bool#];
+
+func testBool3() {
+  let x: Bool? = #^BOOL_3^#
+}
+// BOOL_3: Literal[Boolean]/None/TypeRelation[Convertible]: true[#Bool#];
+// BOOL_3: Literal[Boolean]/None/TypeRelation[Convertible]: false[#Bool#];
+
+func testBool4() {
+  let x: Bool! = #^BOOL_4^#
+}
+// BOOL_4: Literal[Boolean]/None/TypeRelation[Convertible]: true[#Bool#];
+// BOOL_4: Literal[Boolean]/None/TypeRelation[Convertible]: false[#Bool#];
 
 func testInt0() {
   let x: Bool = #^INT_0^#
@@ -185,28 +200,33 @@ func testTuple2() {
 // FIXME: should we extend the tuple to have the right number of elements?
 // TUPLE_2: Literal[Tuple]/None/TypeRelation[Identical]: ({#(values)#})[#(MyInt1, MyString1, MyDouble1)#];
 
-struct MyColor1: _ColorLiteralConvertible {
+struct MyColor1: _ExpressibleByColorLiteral {
   init(colorLiteralRed: Float, green: Float, blue: Float, alpha: Float) {}
 }
 func testColor0() {
   let x: Int = #^COLOR_0^#
 }
-// COLOR_0: Literal[_Color]/None: [#Color({#colorLiteralRed: Float#}, {#green: Float#}, {#blue: Float#}, {#alpha: Float#})#];
+// COLOR_0: Literal[_Color]/None: #colorLiteral({#red: Float#}, {#green: Float#}, {#blue: Float#}, {#alpha: Float#});
 
 func testColor1() {
   let x: MyColor1 = #^COLOR_1^#
 }
-// COLOR_1: Literal[_Color]/None/TypeRelation[Identical]: [#Color({#colorLiteralRed: Float#}, {#green: Float#}, {#blue: Float#}, {#alpha: Float#})#][#MyColor1#];
+// COLOR_1: Literal[_Color]/None/TypeRelation[Identical]: #colorLiteral({#red: Float#}, {#green: Float#}, {#blue: Float#}, {#alpha: Float#})[#MyColor1#];
 
-struct MyImage1: _ImageLiteralConvertible {
-  init(imageLiteral: String) {}
+func testColor2() {
+  let x: MyColor1? = #^COLOR_2^#
+}
+// COLOR_2: Literal[_Color]/None/TypeRelation[Convertible]: #colorLiteral({#red: Float#}, {#green: Float#}, {#blue: Float#}, {#alpha: Float#})[#MyColor1#];
+
+struct MyImage1: _ExpressibleByImageLiteral {
+  init(imageLiteralResourceName: String) {}
 }
 func testImage0() {
   let x: Int = #^IMAGE_0^#
 }
-// IMAGE_0: Literal[_Image]/None: [#Image({#imageLiteral: String#})#];
+// IMAGE_0: Literal[_Image]/None: #imageLiteral({#resourceName: String#});
 
 func testImage1() {
   let x: MyImage1 = #^IMAGE_1^#
 }
-// IMAGE_1: Literal[_Image]/None/TypeRelation[Identical]: [#Image({#imageLiteral: String#})#][#MyImage1#];
+// IMAGE_1: Literal[_Image]/None/TypeRelation[Identical]: #imageLiteral({#resourceName: String#})[#MyImage1#];

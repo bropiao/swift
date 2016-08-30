@@ -219,13 +219,13 @@ bool PartialApplyCombiner::allocateTemporaries() {
 
 /// Emit dealloc_stack for all temporaries.
 void PartialApplyCombiner::deallocateTemporaries() {
-  // Insert dealloc_stack instructions.
-  TinyPtrVector<SILBasicBlock *> ExitBBs;
-  findAllNonFailureExitBBs(PAI->getFunction(), ExitBBs);
+  // Insert dealloc_stack instructions at all function exit points.
+  for (SILBasicBlock &BB : *PAI->getFunction()) {
+    TermInst *Term = BB.getTerminator();
+    if (!Term->isFunctionExiting())
+      continue;
 
-  for (auto Op : Tmps) {
-    for (auto *ExitBB : ExitBBs) {
-      auto *Term = ExitBB->getTerminator();
+    for (auto Op : Tmps) {
       Builder.setInsertionPoint(Term);
       Builder.createDeallocStack(PAI->getLoc(), Op);
     }
@@ -245,7 +245,7 @@ void PartialApplyCombiner::releaseTemporaries() {
       Builder.setInsertionPoint(EndPoint);
       if (!TmpType.isAddressOnly(PAI->getModule())) {
         auto *Load = Builder.createLoad(PAI->getLoc(), Op);
-        Builder.createReleaseValue(PAI->getLoc(), Load);
+        Builder.createReleaseValue(PAI->getLoc(), Load, Atomicity::Atomic);
       } else {
         Builder.createDestroyAddr(PAI->getLoc(), Op);
       }
@@ -340,20 +340,20 @@ bool PartialApplyCombiner::processSingleApply(FullApplySite AI) {
     for (auto Arg : ToBeReleasedArgs) {
       Builder.emitReleaseValueOperation(PAI->getLoc(), Arg);
     }
-    Builder.createStrongRelease(AI.getLoc(), PAI);
+    Builder.createStrongRelease(AI.getLoc(), PAI, Atomicity::Atomic);
     Builder.setInsertionPoint(TAI->getErrorBB()->begin());
     // Release the non-consumed parameters.
     for (auto Arg : ToBeReleasedArgs) {
       Builder.emitReleaseValueOperation(PAI->getLoc(), Arg);
     }
-    Builder.createStrongRelease(AI.getLoc(), PAI);
+    Builder.createStrongRelease(AI.getLoc(), PAI, Atomicity::Atomic);
     Builder.setInsertionPoint(AI.getInstruction());
   } else {
     // Release the non-consumed parameters.
     for (auto Arg : ToBeReleasedArgs) {
       Builder.emitReleaseValueOperation(PAI->getLoc(), Arg);
     }
-    Builder.createStrongRelease(AI.getLoc(), PAI);
+    Builder.createStrongRelease(AI.getLoc(), PAI, Atomicity::Atomic);
   }
 
   SilCombiner->replaceInstUsesWith(*AI.getInstruction(), NAI.getInstruction());
@@ -482,6 +482,11 @@ SILCombiner::optimizeApplyOfConvertFunctionInst(FullApplySite AI,
 
 bool
 SILCombiner::recursivelyCollectARCUsers(UserListTy &Uses, ValueBase *Value) {
+  // FIXME: We could probably optimize this case too
+  if (auto *AI = dyn_cast<ApplyInst>(Value))
+    if (AI->hasIndirectResults())
+      return false;
+
   for (auto *Use : Value->getUses()) {
     SILInstruction *Inst = Use->getUser();
     if (isa<RefCountingInst>(Inst) ||
@@ -514,7 +519,7 @@ void SILCombiner::eraseApply(FullApplySite FAS, const UserListTy &Users) {
         Builder.createDestroyAddr(FAS.getLoc(), Arg);
         break;
       case ParameterConvention::Direct_Owned:
-        Builder.createReleaseValue(FAS.getLoc(), Arg);
+        Builder.createReleaseValue(FAS.getLoc(), Arg, Atomicity::Atomic);
         break;
       case ParameterConvention::Indirect_In_Guaranteed:
       case ParameterConvention::Indirect_Inout:
@@ -610,7 +615,8 @@ static SILValue getAddressOfStackInit(AllocStackInst *ASI,
 /// Find the init_existential, which could be used to determine a concrete
 /// type of the \p Self.
 static SILInstruction *findInitExistential(FullApplySite AI, SILValue Self,
-                                           CanType &OpenedArchetype) {
+                                           CanType &OpenedArchetype,
+                                           SILValue &OpenedArchetypeDef) {
   if (auto *Instance = dyn_cast<AllocStackInst>(Self)) {
     // In case the Self operand is an alloc_stack where a copy_addr copies the
     // result of an open_existential_addr to this stack location.
@@ -633,12 +639,14 @@ static SILInstruction *findInitExistential(FullApplySite AI, SILValue Self,
       return nullptr;
 
     OpenedArchetype = Open->getType().getSwiftRValueType();
+    OpenedArchetypeDef = Open;
     return IE;
   }
 
   if (auto *Open = dyn_cast<OpenExistentialRefInst>(Self)) {
     if (auto *IE = dyn_cast<InitExistentialRefInst>(Open->getOperand())) {
       OpenedArchetype = Open->getType().getSwiftRValueType();
+      OpenedArchetypeDef = Open;
       return IE;
     }
     return nullptr;
@@ -650,6 +658,7 @@ static SILInstruction *findInitExistential(FullApplySite AI, SILValue Self,
       OpenedArchetype = Open->getType().getSwiftRValueType();
       while (auto Metatype = dyn_cast<MetatypeType>(OpenedArchetype))
         OpenedArchetype = Metatype.getInstanceType();
+      OpenedArchetypeDef = Open;
       return IE;
     }
     return nullptr;
@@ -664,6 +673,7 @@ SILCombiner::createApplyWithConcreteType(FullApplySite AI,
                                          SILValue NewSelf,
                                          SILValue Self,
                                          CanType ConcreteType,
+                                         SILValue ConcreteTypeDef,
                                          ProtocolConformanceRef Conformance,
                                          CanType OpenedArchetype) {
   // Create a set of arguments.
@@ -711,6 +721,7 @@ SILCombiner::createApplyWithConcreteType(FullApplySite AI,
 
   FullApplySite NewAI;
   Builder.setCurrentDebugScope(AI.getDebugScope());
+  Builder.addOpenedArchetypeOperands(AI.getInstruction());
 
   if (auto *TAI = dyn_cast<TryApplyInst>(AI))
     NewAI = Builder.createTryApply(AI.getLoc(), AI.getCallee(),
@@ -732,7 +743,7 @@ SILCombiner::createApplyWithConcreteType(FullApplySite AI,
 
 /// Derive a concrete type of self and conformance from the init_existential
 /// instruction.
-static Optional<std::pair<ProtocolConformanceRef, CanType>>
+static Optional<std::tuple<ProtocolConformanceRef, CanType, SILValue>>
 getConformanceAndConcreteType(FullApplySite AI,
                               SILInstruction *InitExistential,
                               ProtocolDecl *Protocol,
@@ -740,6 +751,7 @@ getConformanceAndConcreteType(FullApplySite AI,
                               ArrayRef<ProtocolConformanceRef> &Conformances) {
   // Try to derive the concrete type of self from the found init_existential.
   CanType ConcreteType;
+  SILValue ConcreteTypeDef;
   if (auto IE = dyn_cast<InitExistentialAddrInst>(InitExistential)) {
     Conformances = IE->getConformances();
     ConcreteType = IE->getFormalConcreteType();
@@ -762,11 +774,25 @@ getConformanceAndConcreteType(FullApplySite AI,
     return None;
   }
 
+  if (ConcreteType->isOpenedExistential()) {
+    assert(!InitExistential->getTypeDependentOperands().empty() &&
+           "init_existential is supposed to have a typedef operand");
+    ConcreteTypeDef = InitExistential->getTypeDependentOperands()[0].get();
+  }
+
   // Find the conformance for the protocol we're interested in.
   for (auto Conformance : Conformances) {
     auto Requirement = Conformance.getRequirement();
-    if (Requirement == Protocol || Requirement->inheritsFrom(Protocol)) {
-      return std::make_pair(Conformance, ConcreteType);
+    if (Requirement == Protocol) {
+      return std::make_tuple(Conformance, ConcreteType, ConcreteTypeDef);
+    }
+    if (Requirement->inheritsFrom(Protocol)) {
+      // If Requirement != Protocol, then the abstract conformance cannot be used
+      // as is and we need to create a proper conformance.
+      return std::make_tuple(Conformance.isAbstract()
+                                ? ProtocolConformanceRef(Protocol)
+                                : Conformance,
+                            ConcreteType, ConcreteTypeDef);
     }
   }
 
@@ -798,8 +824,9 @@ SILCombiner::propagateConcreteTypeOfInitExistential(FullApplySite AI,
   // Try to find the init_existential, which could be used to
   // determine a concrete type of the self.
   CanType OpenedArchetype;
+  SILValue OpenedArchetypeDef;
   SILInstruction *InitExistential =
-    findInitExistential(AI, Self, OpenedArchetype);
+    findInitExistential(AI, Self, OpenedArchetype, OpenedArchetypeDef);
   if (!InitExistential)
     return nullptr;
 
@@ -813,17 +840,35 @@ SILCombiner::propagateConcreteTypeOfInitExistential(FullApplySite AI,
   if (!ConformanceAndConcreteType)
     return nullptr;
 
-  auto ConcreteType = ConformanceAndConcreteType->second;
-  auto Conformance = ConformanceAndConcreteType->first;
+  ProtocolConformanceRef Conformance = std::get<0>(*ConformanceAndConcreteType);
+  CanType ConcreteType = std::get<1>(*ConformanceAndConcreteType);
+  SILValue ConcreteTypeDef = std::get<2>(*ConformanceAndConcreteType);
+
+  SILOpenedArchetypesTracker *OldOpenedArchetypesTracker =
+      Builder.getOpenedArchetypesTracker();
+
+  SILOpenedArchetypesTracker OpenedArchetypesTracker(*AI.getFunction());
+
+  if (ConcreteType->isOpenedExistential()) {
+    // Prepare a mini-mapping for opened archetypes.
+    // SILOpenedArchetypesTracker OpenedArchetypesTracker(*AI.getFunction());
+    OpenedArchetypesTracker.addOpenedArchetypeDef(ConcreteType, ConcreteTypeDef);
+    Builder.setOpenedArchetypesTracker(&OpenedArchetypesTracker);
+  }
 
   // Propagate the concrete type into the callee-operand if required.
   Propagate(ConcreteType, Conformance);
 
   // Create a new apply instruction that uses the concrete type instead
   // of the existential type.
-  return createApplyWithConcreteType(AI, NewSelf, Self,
-                                     ConcreteType, Conformance,
-                                     OpenedArchetype);
+  auto *NewAI = createApplyWithConcreteType(AI, NewSelf, Self, ConcreteType,
+                                            ConcreteTypeDef, Conformance,
+                                            OpenedArchetype);
+
+  if (ConcreteType->isOpenedExistential())
+    Builder.setOpenedArchetypesTracker(OldOpenedArchetypesTracker);
+
+  return NewAI;
 }
 
 SILInstruction *
@@ -857,15 +902,10 @@ SILCombiner::propagateConcreteTypeOfInitExistential(FullApplySite AI,
                                            ProtocolConformanceRef Conformance) {
     // Keep around the dependence on the open instruction unless we've
     // actually eliminated the use.
-    SILValue OptionalExistential;
-    if (WMI->hasOperand() && ConcreteType->isOpenedExistential())
-      OptionalExistential = WMI->getOperand();
-
     auto *NewWMI = Builder.createWitnessMethod(WMI->getLoc(),
                                                 ConcreteType,
                                                 Conformance, WMI->getMember(),
                                                 WMI->getType(),
-                                                OptionalExistential,
                                                 WMI->isVolatile());
     replaceInstUsesWith(*WMI, NewWMI);
     eraseInstFromFunction(*WMI);
@@ -919,101 +959,6 @@ SILCombiner::propagateConcreteTypeOfInitExistential(FullApplySite AI) {
 
   // Try to perform the propagation.
   return propagateConcreteTypeOfInitExistential(AI, PD, PropagateIntoOperand);
-}
-
-/// Optimize thin_func_to_ptr->ptr_to_thin_func casts into a type substituted
-/// apply.
-/// This kind of code arises in generic materializeForSet code that was
-/// specialized for a concrete type.
-///
-/// Note: this is not as general as it should be. The general solution is the
-/// introduction of a partial_apply_thin_recoverable (an instruction that
-/// partially applies a type and returns a thin_function) as suggested in
-/// SILGenBuiltin.cpp.
-///
-/// %208 = thin_function_to_pointer %207 :
-///  $@convention(thin) <τ_0_0> (Builtin.RawPointer, @inout Builtin.UnsafeValueBuffer,
-///                  @inout UnsafeMutableBufferPointer<τ_0_0>,
-///                  @thick UnsafeMutableBufferPointer<τ_0_0>.Type) -> ()
-///                  to $Builtin.RawPointer
-/// %209 = pointer_to_thin_function %217 : $Builtin.RawPointer to
-///  $@convention(thin) (Builtin.RawPointer, @inout Builtin.UnsafeValueBuffer,
-///          @inout UnsafeMutableBufferPointer<Int>,
-///          @thick UnsafeMutableBufferPointer<Int>.Type) -> ()
-/// apply %209(%227, %200#1, %0, %224) : $@convention(thin) (Builtin.RawPointer,
-///  @inout Builtin.UnsafeValueBuffer, @inout UnsafeMutableBufferPointer<Int>,
-///  @thick UnsafeMutableBufferPointer<Int>.Type) -> ()
-///
-///  => apply %207<Int>(%227, ...)
-static ApplyInst *optimizeCastThroughThinFunctionPointer(
-    SILBuilder &Builder, ApplyInst *AI, FunctionRefInst *OrigThinFun,
-    PointerToThinFunctionInst *CastedThinFun) {
-
-  // The original function type needs to be polymorphic.
-  auto ConvertCalleeTy = OrigThinFun->getType().castTo<SILFunctionType>();
-  assert(ConvertCalleeTy);
-  if (!ConvertCalleeTy->isPolymorphic())
-    return nullptr;
-
-  // Need to have four parameters.
-  auto OrigParams = ConvertCalleeTy->getParameters();
-  if (OrigParams.size() != 4)
-    return nullptr;
-
-  // There must only be one parameter to substitute.
-  auto *ReferencedFunction = OrigThinFun->getReferencedFunction();
-  assert(ReferencedFunction);
-  if (ReferencedFunction->isExternalDeclaration())
-    return nullptr;
-  auto Params = ReferencedFunction->getContextGenericParams()->getParams();
-  if (Params.size() != 1)
-    return nullptr;
-
-  // Get the concrete type from the casted to function.
-  auto CastedFunTy = CastedThinFun->getType().castTo<SILFunctionType>();
-  auto CastedParams = CastedFunTy->getParameters();
-  if (CastedParams.size() != 4)
-    return nullptr;
-
-  // The fourth parameter is a metatype of a bound generic type. Use it to
-  // obtain the type substitutions to apply.
-  auto MetaTy = dyn_cast<MetatypeType>(CastedParams[3].getType());
-  if (!MetaTy)
-    return nullptr;
-
-  // Get the bound generic type from the metatype.
-  auto BoundGenericInstTy = dyn_cast_or_null<BoundGenericType>(
-      MetaTy->getInstanceType().getCanonicalTypeOrNull());
-  if (!BoundGenericInstTy)
-    return nullptr;
-
-  // The bound generic type will carry the substitutions to apply.
-  auto Subs = BoundGenericInstTy->getSubstitutions(
-      AI->getModule().getSwiftModule(), nullptr);
-
-  if (Subs.size() == 0)
-    return nullptr;
-
-  // If the generic signature of the function doesn't match the generic
-  // signature of the type, don't try to continue.
-  if (BoundGenericInstTy->getDecl()->getGenericSignature()
-        ->getCanonicalSignature() != ConvertCalleeTy->getGenericSignature())
-    return nullptr;
-
-  SmallVector<SILValue, 16> Args;
-  for (auto Arg : AI->getArguments())
-    Args.push_back(Arg);
-
-  auto NewSubstCalleeType =
-      SILType::getPrimitiveObjectType(ConvertCalleeTy->substGenericArgs(
-          AI->getModule(), AI->getModule().getSwiftModule(), Subs));
-
-  Builder.setCurrentDebugScope(AI->getDebugScope());
-  ApplyInst *NewApply = Builder.createApply(
-      AI->getLoc(), OrigThinFun, NewSubstCalleeType, AI->getType(), Subs, Args,
-                                             AI->isNonThrowing());
-
-  return NewApply;
 }
 
 /// \brief Check that all users of the apply are retain/release ignoring one
@@ -1079,7 +1024,7 @@ static void emitMatchingRCAdjustmentsForCall(ApplyInst *Call, SILValue OnX) {
 
   // Emit a retain for the @owned return.
   SILBuilderWithScope Builder(Call);
-  Builder.createRetainValue(Call->getLoc(), OnX);
+  Builder.createRetainValue(Call->getLoc(), OnX, Atomicity::Atomic);
 
   // Emit a release for the @owned parameter, or none for a @guaranteed
   // parameter.
@@ -1091,14 +1036,7 @@ static void emitMatchingRCAdjustmentsForCall(ApplyInst *Call, SILValue OnX) {
          ParamInfo == ParameterConvention::Direct_Guaranteed);
 
   if (ParamInfo == ParameterConvention::Direct_Owned)
-    Builder.createReleaseValue(Call->getLoc(), OnX);
-}
-
-static bool isCastTypeKnownToSucceed(SILType Type, SILModule &Mod) {
-  auto *M = Mod.getSwiftModule();
-  return M->getASTContext()
-      .getBridgedToObjC(M, Type.getSwiftRValueType(), nullptr)
-      .hasValue();
+    Builder.createReleaseValue(Call->getLoc(), OnX, Atomicity::Atomic);
 }
 
 /// Replace an application of a cast composition f_inverse(f(x)) by x.
@@ -1111,12 +1049,6 @@ bool SILCombiner::optimizeIdentityCastComposition(ApplyInst *FInverse,
 
   // We need to know how to replace the call by reference counting instructions.
   if (!knowHowToEmitReferenceCountInsts(FInverse))
-    return false;
-
-  // We need to know that the cast will succeed.
-  if (!isCastTypeKnownToSucceed(FInverse->getArgument(0)->getType(),
-                                FInverse->getModule()) ||
-      !isCastTypeKnownToSucceed(FInverse->getType(), FInverse->getModule()))
     return false;
 
   // Need to have a matching 'f'.
@@ -1145,12 +1077,14 @@ bool SILCombiner::optimizeIdentityCastComposition(ApplyInst *FInverse,
     // X might not be strong_retain/release'able. Replace it by a
     // retain/release_value on X instead.
     if (isa<StrongRetainInst>(User)) {
-      SILBuilderWithScope(User).createRetainValue(User->getLoc(), X);
+      SILBuilderWithScope(User).createRetainValue(User->getLoc(), X,
+                                                  Atomicity::Atomic);
       eraseInstFromFunction(*User);
       continue;
     }
     if (isa<StrongReleaseInst>(User)) {
-      SILBuilderWithScope(User).createReleaseValue(User->getLoc(), X);
+      SILBuilderWithScope(User).createReleaseValue(User->getLoc(), X,
+                                                   Atomicity::Atomic);
       eraseInstFromFunction(*User);
       continue;
     }
@@ -1181,18 +1115,6 @@ SILInstruction *SILCombiner::visitApplyInst(ApplyInst *AI) {
 
   if (auto *CFI = dyn_cast<ConvertFunctionInst>(AI->getCallee()))
     return optimizeApplyOfConvertFunctionInst(AI, CFI);
-
-  if (auto *CastedThinFun =
-          dyn_cast<PointerToThinFunctionInst>(AI->getCallee()))
-    if (auto *Ptr =
-            dyn_cast<ThinFunctionToPointerInst>(CastedThinFun->getOperand()))
-      if (auto *OrigThinFun = dyn_cast<FunctionRefInst>(Ptr->getOperand()))
-        if (auto *NewAI = optimizeCastThroughThinFunctionPointer(
-                Builder, AI, OrigThinFun, CastedThinFun)) {
-          replaceInstUsesWith(*AI, NewAI);
-          eraseInstFromFunction(*AI);
-          return nullptr;
-        }
 
   // Optimize readonly functions with no meaningful users.
   SILFunction *SF = AI->getReferencedFunction();
@@ -1235,6 +1157,7 @@ SILInstruction *SILCombiner::visitApplyInst(ApplyInst *AI) {
     // The type of the substitution is the source type of the thin to thick
     // instruction.
     SILType substTy = TTTFI->getOperand()->getType();
+    Builder.addOpenedArchetypeOperands(AI);
     auto *NewAI = Builder.createApply(AI->getLoc(), TTTFI->getOperand(),
                                       substTy, AI->getType(),
                                       AI->getSubstitutions(), Arguments,
@@ -1391,4 +1314,3 @@ SILInstruction *SILCombiner::visitTryApplyInst(TryApplyInst *AI) {
 
   return nullptr;
 }
-
