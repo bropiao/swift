@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 ///
@@ -18,9 +18,11 @@
 
 #include "swift/AST/Comment.h"
 #include "swift/AST/Decl.h"
+#include "swift/AST/Types.h"
 #include "swift/AST/PrettyStackTrace.h"
 #include "swift/AST/RawComment.h"
 #include "swift/Markup/Markup.h"
+#include "llvm/ADT/SetVector.h"
 
 using namespace swift;
 
@@ -213,6 +215,7 @@ bool extractSimpleField(
     SmallVectorImpl<const swift::markup::MarkupASTNode *> &BodyNodes) {
   auto Children = L->getChildren();
   SmallVector<swift::markup::MarkupASTNode *, 8> NormalItems;
+  llvm::SmallSetVector<StringRef, 8> Tags;
   for (auto Child : Children) {
     auto I = dyn_cast<swift::markup::Item>(Child);
     if (!I) {
@@ -260,16 +263,26 @@ bool extractSimpleField(
     ParagraphText->setLiteralContent(Remainder);
     auto Field = swift::markup::createSimpleField(MC, Tag, ItemChildren);
 
-    if (auto RF = dyn_cast<swift::markup::ReturnsField>(Field))
+    if (auto RF = dyn_cast<swift::markup::ReturnsField>(Field)) {
       Parts.ReturnsField = RF;
-    else if (auto TF = dyn_cast<swift::markup::ThrowsField>(Field))
+    } else if (auto TF = dyn_cast<swift::markup::ThrowsField>(Field)) {
       Parts.ThrowsField = TF;
-    else
+    } else if (auto TF = dyn_cast<swift::markup::TagField>(Field)) {
+      llvm::SmallString<64> Scratch;
+      llvm::raw_svector_ostream OS(Scratch);
+      printInlinesUnder(TF, OS);
+      Tags.insert(MC.allocateCopy(OS.str()));
+    } else if (auto LKF = dyn_cast<markup::LocalizationKeyField>(Field)) {
+      Parts.LocalizationKeyField = LKF;
+    } else {
       BodyNodes.push_back(Field);
+    }
   }
 
   if (NormalItems.size() != Children.size())
     L->setChildren(NormalItems);
+
+  Parts.Tags = MC.allocateCopy(Tags.getArrayRef());
 
   return NormalItems.size() == 0;
 }
@@ -401,9 +414,9 @@ getProtocolRequirementDocComment(swift::markup::MarkupContext &MC,
                                                 const ValueDecl *VD)
     -> const ValueDecl * {
       SmallVector<ValueDecl *, 2> Members;
-      P->lookupQualified(P->getType(), VD->getFullName(),
+      P->lookupQualified(P->getDeclaredType(), VD->getFullName(),
                          NLOptions::NL_ProtocolMembers,
-                         /*resolver=*/nullptr, Members);
+                         /*typeResolver=*/nullptr, Members);
     SmallVector<const ValueDecl *, 1> ProtocolRequirements;
     for (auto Member : Members)
       if (!Member->isDefinition())
@@ -422,10 +435,6 @@ getProtocolRequirementDocComment(swift::markup::MarkupContext &MC,
     SmallVector<const ValueDecl *, 4> RequirementsWithDocs;
     if (auto Requirement = getSingleRequirementWithNonemptyDoc(ProtoExt, VD))
       RequirementsWithDocs.push_back(Requirement);
-
-    for (auto Proto : ProtoExt->getInheritedProtocols(/*resolver=*/nullptr))
-      if (auto Requirement = getSingleRequirementWithNonemptyDoc(Proto, VD))
-        RequirementsWithDocs.push_back(Requirement);
 
     if (RequirementsWithDocs.size() == 1)
       return getSingleDocComment(MC, RequirementsWithDocs.front());

@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -19,12 +19,15 @@
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "swift/AST/TypeAlignments.h"
+#include "swift/AST/Type.h"
 
 namespace llvm {
   class raw_ostream;
 }
 
 namespace swift {
+
+class ProtocolConformance;
 
 /// A ProtocolConformanceRef is a handle to a protocol conformance which
 /// may be either concrete or abstract.
@@ -101,6 +104,12 @@ public:
   friend llvm::hash_code hash_value(ProtocolConformanceRef conformance) {
     return llvm::hash_value(conformance.Union.getOpaqueValue());
   }
+
+  static Type
+  getTypeWitnessByName(Type type,
+                       ProtocolConformanceRef conformance,
+                       Identifier name,
+                       LazyResolver *resolver);
 };
 
 } // end namespace swift

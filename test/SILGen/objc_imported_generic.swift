@@ -24,25 +24,40 @@ public func genericMethodOnAnyObjectChained(o: AnyObject, b: Bool) -> AnyObject?
   return o.thing?()
 }
 
-// CHECK-LABEL: sil @_TF21objc_imported_generic31genericMethodOnAnyObjectChained
-// CHECK:         dynamic_method_br %4 : $@opened([[TAG:.*]]) AnyObject, #GenericClass.thing!1.foreign, bb1
-// CHECK:       bb1({{%.*}} : $@convention(objc_method) @pseudogeneric (@opened([[TAG]]) AnyObject) -> @autoreleased Optional<AnyObject>):
+// CHECK-LABEL: sil @_TF21objc_imported_generic31genericMethodOnAnyObjectChainedFT1oPs9AnyObject_1bSb_GSqPS0___
+// CHECK: bb0([[ANY:%.*]] : $AnyObject, [[BOOL:%.*]] : $Bool):
+// CHECK:   [[BORROWED_ANY:%.*]] = begin_borrow [[ANY]]
+// CHECK:   [[OPENED_ANY:%.*]] = open_existential_ref [[BORROWED_ANY]]
+// CHECK:   [[OPENED_ANY_COPY:%.*]] = copy_value [[OPENED_ANY]]
+// CHECK:   dynamic_method_br [[OPENED_ANY_COPY]] : $@opened([[TAG:.*]]) AnyObject, #GenericClass.thing!1.foreign, bb1
+// CHECK:   bb1({{%.*}} : $@convention(objc_method) @pseudogeneric (@opened([[TAG]]) AnyObject) -> @autoreleased Optional<AnyObject>):
+// CHECK: } // end sil function '_TF21objc_imported_generic31genericMethodOnAnyObjectChainedFT1oPs9AnyObject_1bSb_GSqPS0___'
 
 public func genericSubscriptOnAnyObject(o: AnyObject, b: Bool) -> AnyObject? {
   return o[0 as UInt16]
 }
 
-// CHECK-LABEL: sil @_TF21objc_imported_generic27genericSubscriptOnAnyObject
-// CHECK:         dynamic_method_br %4 : $@opened([[TAG:.*]]) AnyObject, #GenericClass.subscript!getter.1.foreign, bb1
-// CHECK:       bb1({{%.*}} : $@convention(objc_method) @pseudogeneric (UInt16, @opened([[TAG]]) AnyObject) -> @autoreleased AnyObject):
+// CHECK-LABEL: sil @_TF21objc_imported_generic27genericSubscriptOnAnyObjectFT1oPs9AnyObject_1bSb_GSqPS0___
+// CHECK: bb0([[ANY:%.*]] : $AnyObject,
+// CHECK:   [[BORROWED_ANY:%.*]] = begin_borrow [[ANY]]
+// CHECK:   [[OPENED_ANY:%.*]] = open_existential_ref [[BORROWED_ANY]]
+// CHECK:   [[OPENED_ANY_COPY:%.*]] = copy_value [[OPENED_ANY]]
+// CHECK:   dynamic_method_br [[OPENED_ANY_COPY]] : $@opened([[TAG:.*]]) AnyObject, #GenericClass.subscript!getter.1.foreign, bb1
+// CHECK:   bb1({{%.*}} : $@convention(objc_method) @pseudogeneric (UInt16, @opened([[TAG]]) AnyObject) -> @autoreleased AnyObject):
+// CHECK: } // end sil function '_TF21objc_imported_generic27genericSubscriptOnAnyObjectFT1oPs9AnyObject_1bSb_GSqPS0___'
 
 public func genericPropertyOnAnyObject(o: AnyObject, b: Bool) -> AnyObject?? {
   return o.propertyThing
 }
 
-// CHECK-LABEL: sil @_TF21objc_imported_generic26genericPropertyOnAnyObject
-// CHECK:         dynamic_method_br %4 : $@opened([[TAG:.*]]) AnyObject, #GenericClass.propertyThing!getter.1.foreign, bb1
-// CHECK:       bb1({{%.*}} : $@convention(objc_method) @pseudogeneric (@opened([[TAG]]) AnyObject) -> @autoreleased Optional<AnyObject>):
+// CHECK-LABEL: sil @_TF21objc_imported_generic26genericPropertyOnAnyObjectFT1oPs9AnyObject_1bSb_GSqGSqPS0____
+// CHECK: bb0([[ANY:%.*]] : $AnyObject, [[BOOL:%.*]] : $Bool):
+// CHECK:   [[BORROWED_ANY:%.*]] = begin_borrow [[ANY]]
+// CHECK:   [[OPENED_ANY:%.*]] = open_existential_ref [[BORROWED_ANY]]
+// CHECK:   [[OPENED_ANY_COPY:%.*]] = copy_value [[OPENED_ANY]]
+// CHECK:   dynamic_method_br [[OPENED_ANY_COPY]] : $@opened([[TAG:.*]]) AnyObject, #GenericClass.propertyThing!getter.1.foreign, bb1
+// CHECK:   bb1({{%.*}} : $@convention(objc_method) @pseudogeneric (@opened([[TAG]]) AnyObject) -> @autoreleased Optional<AnyObject>):
+// CHECK: } // end sil function '_TF21objc_imported_generic26genericPropertyOnAnyObjectFT1oPs9AnyObject_1bSb_GSqGSqPS0____'
 
 public protocol ThingHolder {
   associatedtype Thing
@@ -76,13 +91,13 @@ public func genericBlockBridging<T: Ansible>(x: GenericClass<T>) {
 
 // CHECK-LABEL: sil @_TF21objc_imported_generic20genericBlockBridging
 // CHECK:         [[BLOCK_TO_FUNC:%.*]] = function_ref @_TTRGRxs9AnyObjectx21objc_imported_generic7AnsiblerXFdCb_dx_ax_XFo_ox_ox_
-// CHECK:         partial_apply [[BLOCK_TO_FUNC]]<T, {{.*}}>
-// CHECK:         [[FUNC_TO_BLOCK:%.*]] = function_ref @_TTRGRxs9AnyObjectx21objc_imported_generic7AnsiblerXFo_ox_ox_XFdCb_dx_ax_
-// CHECK:         init_block_storage_header {{.*}} invoke [[FUNC_TO_BLOCK]]<T,{{.*}}>
+// CHECK:         partial_apply [[BLOCK_TO_FUNC]]<T>
+// CHECK:         [[FUNC_TO_BLOCK:%.*]] = function_ref @_TTRgRxs9AnyObjectx21objc_imported_generic7AnsiblerXFo_ox_ox_XFdCb_dx_ax_
+// CHECK:         init_block_storage_header {{.*}} invoke [[FUNC_TO_BLOCK]]<T>
 
 // CHECK-LABEL: sil @_TF21objc_imported_generic20arraysOfGenericParam
 public func arraysOfGenericParam<T: AnyObject>(y: Array<T>) {
-  // CHECK:         function_ref {{@_TFCSo12GenericClassCfT13arrayOfThings.*}} : $@convention(method) <τ_0_0 where τ_0_0 : AnyObject> (@owned Array<τ_0_0>, @thick GenericClass<τ_0_0>.Type) -> @owned ImplicitlyUnwrappedOptional<GenericClass<τ_0_0>>
+  // CHECK:         function_ref {{@_TFCSo12GenericClassCfT13arrayOfThings.*}} : $@convention(method) <τ_0_0 where τ_0_0 : AnyObject> (@owned Array<τ_0_0>, @thick GenericClass<τ_0_0>.Type) -> @owned Optional<GenericClass<τ_0_0>>
   let x = GenericClass<T>(arrayOfThings: y)!
   // CHECK:         class_method [volatile] {{%.*}} : $GenericClass<T>, #GenericClass.setArrayOfThings!1.foreign {{.*}}, $@convention(objc_method) @pseudogeneric <τ_0_0 where τ_0_0 : AnyObject> (NSArray, GenericClass<τ_0_0>) -> ()
   x.setArrayOfThings(y)
@@ -114,7 +129,7 @@ func configureWithoutOptions() {
 // foreign to native thunk for init(options:), uses GenericOption : Hashable
 // conformance
 
-// CHECK-LABEL: sil shared [thunk] @_TTOFCSo12GenericClasscfT7optionsGSqGVs10DictionaryVSC13GenericOptionP____GSQGS_x__ : $@convention(method) <T where T : AnyObject> (@owned Optional<Dictionary<GenericOption, Any>>, @owned GenericClass<T>) -> @owned ImplicitlyUnwrappedOptional<GenericClass<T>>
+// CHECK-LABEL: sil shared [thunk] @_TTOFCSo12GenericClasscfT7optionsGSqGVs10DictionaryVSC13GenericOptionP____GSQGS_x__ : $@convention(method) <T where T : AnyObject> (@owned Optional<Dictionary<GenericOption, Any>>, @owned GenericClass<T>) -> @owned Optional<GenericClass<T>>
 // CHECK: [[FN:%.*]] = function_ref @_TFE10FoundationVs10Dictionary19_bridgeToObjectiveCfT_CSo12NSDictionary : $@convention(method) <τ_0_0, τ_0_1 where τ_0_0 : Hashable> (@guaranteed Dictionary<τ_0_0, τ_0_1>) -> @owned NSDictionary
 // CHECK: apply [[FN]]<GenericOption, Any>({{.*}}) : $@convention(method) <τ_0_0, τ_0_1 where τ_0_0 : Hashable> (@guaranteed Dictionary<τ_0_0, τ_0_1>) -> @owned NSDictionary
 // CHECK: return
@@ -122,10 +137,10 @@ func configureWithoutOptions() {
 // This gets emitted down here for some reason
 
 // CHECK-LABEL: sil shared [thunk] @_TTOFCSo12GenericClasscfT13arrayOfThings
-// CHECK:         class_method [volatile] {{%.*}} : $GenericClass<T>, #GenericClass.init!initializer.1.foreign {{.*}}, $@convention(objc_method) @pseudogeneric <τ_0_0 where τ_0_0 : AnyObject> (NSArray, @owned GenericClass<τ_0_0>) -> @owned ImplicitlyUnwrappedOptional<GenericClass<τ_0_0>>
+// CHECK:         class_method [volatile] {{%.*}} : $GenericClass<T>, #GenericClass.init!initializer.1.foreign {{.*}}, $@convention(objc_method) @pseudogeneric <τ_0_0 where τ_0_0 : AnyObject> (NSArray, @owned GenericClass<τ_0_0>) -> @owned Optional<GenericClass<τ_0_0>>
 
 // Make sure we emitted the witness table for the above conformance
 
 // CHECK-LABEL: sil_witness_table shared [fragile] GenericOption: Hashable module objc_generics {
-// CHECK: method #Hashable.hashValue!getter.1: @_TTWVSC13GenericOptions8Hashable13objc_genericsFS0_g9hashValueSi
+// CHECK: method #Hashable.hashValue!getter.1: {{.*}} : @_TTWVSC13GenericOptions8Hashable13objc_genericsFS0_g9hashValueSi
 // CHECK: }

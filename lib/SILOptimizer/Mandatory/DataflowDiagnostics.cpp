@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -14,6 +14,7 @@
 #include "swift/SILOptimizer/PassManager/Transforms.h"
 #include "swift/AST/ASTContext.h"
 #include "swift/AST/DiagnosticEngine.h"
+#include "swift/AST/DiagnosticsSema.h"
 #include "swift/AST/DiagnosticsSIL.h"
 #include "swift/AST/Expr.h"
 #include "swift/SIL/SILFunction.h"
@@ -21,6 +22,7 @@
 #include "swift/SIL/SILLocation.h"
 #include "swift/SIL/SILModule.h"
 #include "swift/SIL/SILVisitor.h"
+
 using namespace swift;
 
 template<typename...T, typename...U>
@@ -39,7 +41,7 @@ static void diagnoseMissingReturn(const UnreachableInst *UI,
   Type ResTy;
 
   if (auto *FD = FLoc.getAsASTNode<FuncDecl>()) {
-    ResTy = FD->getResultType();
+    ResTy = FD->getResultInterfaceType();
   } else if (auto *CE = FLoc.getAsASTNode<ClosureExpr>()) {
     ResTy = CE->getResultType();
   } else {
@@ -55,7 +57,6 @@ static void diagnoseMissingReturn(const UnreachableInst *UI,
            diagID, ResTy,
            FLoc.isASTNode<ClosureExpr>() ? 1 : 0);
 }
-
 
 static void diagnoseUnreachable(const SILInstruction *I,
                                 ASTContext &Context) {
@@ -83,7 +84,8 @@ static void diagnoseUnreachable(const SILInstruction *I,
 
     // A non-exhaustive switch would also produce an unreachable instruction.
     if (L.isASTNode<SwitchStmt>()) {
-      diagnose(Context, L.getEndSourceLoc(), diag::non_exhaustive_switch);
+      diagnoseMissingCases(Context, L.getAsASTNode<SwitchStmt>(),
+                           diag::non_exhaustive_switch);
       return;
     }
 
@@ -118,7 +120,7 @@ static void diagnoseStaticReports(const SILInstruction *I,
 
 namespace {
 class EmitDFDiagnostics : public SILFunctionTransform {
-  virtual ~EmitDFDiagnostics() {}
+  ~EmitDFDiagnostics() override {}
 
   StringRef getName() override { return "Emit Dataflow Diagnostics"; }
 

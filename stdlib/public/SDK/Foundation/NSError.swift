@@ -2,16 +2,45 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
+@_exported import Foundation // Clang module
 import CoreFoundation
 import Darwin
+import _SwiftFoundationOverlayShims
+
+//===----------------------------------------------------------------------===//
+// NSError (as an out parameter).
+//===----------------------------------------------------------------------===//
+
+public typealias NSErrorPointer = AutoreleasingUnsafeMutablePointer<NSError?>?
+
+// Note: NSErrorPointer becomes ErrorPointer in Swift 3.
+public typealias ErrorPointer = NSErrorPointer
+
+public // COMPILER_INTRINSIC
+let _nilObjCError: Error = _GenericObjCError.nilError
+
+@_silgen_name("swift_convertNSErrorToError")
+public // COMPILER_INTRINSIC
+func _convertNSErrorToError(_ error: NSError?) -> Error {
+  if let error = error {
+    return error
+  }
+  return _nilObjCError
+}
+
+@_silgen_name("swift_convertErrorToNSError")
+public // COMPILER_INTRINSIC
+func _convertErrorToNSError(_ error: Error) -> NSError {
+  return unsafeDowncast(_bridgeErrorToNSError(error), to: NSError.self)
+}
 
 /// Describes an error that provides localized messages describing why
 /// an error occurred and provides more information about the error.
@@ -36,13 +65,6 @@ public extension LocalizedError {
   var helpAnchor: String? { return nil }
 }
 
-@_silgen_name("NS_Swift_performErrorRecoverySelector")
-internal func NS_Swift_performErrorRecoverySelector(
-  delegate: AnyObject?,
-  selector: Selector,
-  success: ObjCBool,
-  contextInfo: UnsafeMutableRawPointer?)
-
 /// Class that implements the informal protocol
 /// NSErrorRecoveryAttempting, which is used by NSError when it
 /// attempts recovery from an error.
@@ -55,11 +77,7 @@ class _NSErrorRecoveryAttempter {
                        contextInfo: UnsafeMutableRawPointer?) {
     let error = nsError as Error as! RecoverableError
     error.attemptRecovery(optionIndex: recoveryOptionIndex) { success in
-      NS_Swift_performErrorRecoverySelector(
-        delegate: delegate,
-        selector: didRecoverSelector,
-        success: ObjCBool(success),
-        contextInfo: contextInfo)
+      __NSErrorPerformRecoverySelector(delegate, didRecoverSelector, success, contextInfo)
     }
   }
 
@@ -121,12 +139,55 @@ public protocol CustomNSError : Error {
   var errorUserInfo: [String : Any] { get }
 }
 
+public extension CustomNSError {
+  /// Default domain of the error.
+  static var errorDomain: String {
+    return String(reflecting: self)
+  }
+
+  /// The error code within the given domain.
+  var errorCode: Int {
+    return _swift_getDefaultErrorCode(self)
+  }
+
+  /// The default user-info dictionary.
+  var errorUserInfo: [String : Any] {
+    return [:]
+  }
+}
+
+extension CustomNSError where Self: RawRepresentable, Self.RawValue: SignedInteger {
+  // The error code of Error with integral raw values is the raw value.
+  public var errorCode: Int {
+    return numericCast(self.rawValue)
+  }
+}
+
+extension CustomNSError where Self: RawRepresentable, Self.RawValue: UnsignedInteger {
+  // The error code of Error with integral raw values is the raw value.
+  public var errorCode: Int {
+    return numericCast(self.rawValue)
+  }
+}
+
 public extension Error where Self : CustomNSError {
   /// Default implementation for customized NSErrors.
   var _domain: String { return Self.errorDomain }
 
   /// Default implementation for customized NSErrors.
   var _code: Int { return self.errorCode }
+}
+
+public extension Error where Self: CustomNSError, Self: RawRepresentable,
+    Self.RawValue: SignedInteger {
+  /// Default implementation for customized NSErrors.
+  var _code: Int { return self.errorCode }  
+}
+
+public extension Error where Self: CustomNSError, Self: RawRepresentable,
+    Self.RawValue: UnsignedInteger {
+  /// Default implementation for customized NSErrors.
+  var _code: Int { return self.errorCode }  
 }
 
 public extension Error {
@@ -244,7 +305,7 @@ public func _swift_Foundation_getErrorDefaultUserInfo(_ error: Error)
 extension NSError : Error {
   public var _domain: String { return domain }
   public var _code: Int { return code }
-  public var _userInfo: Any? { return userInfo }
+  public var _userInfo: AnyObject? { return userInfo as NSDictionary }
 
   /// The "embedded" NSError is itself.
   public func _getEmbeddedNSError() -> AnyObject? {
@@ -261,8 +322,8 @@ extension CFError : Error {
     return CFErrorGetCode(self)
   }
 
-  public var _userInfo: Any? {
-    return CFErrorCopyUserInfo(self) as Any
+  public var _userInfo: AnyObject? {
+    return CFErrorCopyUserInfo(self) as AnyObject
   }
 
   /// The "embedded" NSError is itself.
@@ -1743,75 +1804,178 @@ public struct URLError : _BridgedStoredNSError {
 
   public static var _nsErrorDomain: String { return NSURLErrorDomain }
 
-  @objc public enum Code : Int, _ErrorCodeProtocol {
+  /// The error code itself.
+  public struct Code : RawRepresentable, _ErrorCodeProtocol {
     public typealias _ErrorType = URLError
 
-    case unknown = -1
-    case cancelled = -999
-    case badURL = -1000
-    case timedOut = -1001
-    case unsupportedURL = -1002
-    case cannotFindHost = -1003
-    case cannotConnectToHost = -1004
-    case networkConnectionLost = -1005
-    case dnsLookupFailed = -1006
-    case httpTooManyRedirects = -1007
-    case resourceUnavailable = -1008
-    case notConnectedToInternet = -1009
-    case redirectToNonExistentLocation = -1010
-    case badServerResponse = -1011
-    case userCancelledAuthentication = -1012
-    case userAuthenticationRequired = -1013
-    case zeroByteResource = -1014
-    case cannotDecodeRawData = -1015
-    case cannotDecodeContentData = -1016
-    case cannotParseResponse = -1017
-    case fileDoesNotExist = -1100
-    case fileIsDirectory = -1101
-    case noPermissionsToReadFile = -1102
-    case secureConnectionFailed = -1200
-    case serverCertificateHasBadDate = -1201
-    case serverCertificateUntrusted = -1202
-    case serverCertificateHasUnknownRoot = -1203
-    case serverCertificateNotYetValid = -1204
-    case clientCertificateRejected = -1205
-    case clientCertificateRequired = -1206
-    case cannotLoadFromNetwork = -2000
-    case cannotCreateFile = -3000
-    case cannotOpenFile = -3001
-    case cannotCloseFile = -3002
-    case cannotWriteToFile = -3003
-    case cannotRemoveFile = -3004
-    case cannotMoveFile = -3005
-    case downloadDecodingFailedMidStream = -3006
-    case downloadDecodingFailedToComplete = -3007
+    public let rawValue: Int
 
-    @available(OSX, introduced: 10.7) @available(iOS, introduced: 3.0)
-    case internationalRoamingOff = -1018
-
-    @available(OSX, introduced: 10.7) @available(iOS, introduced: 3.0)
-    case callIsActive = -1019
-
-    @available(OSX, introduced: 10.7) @available(iOS, introduced: 3.0)
-    case dataNotAllowed = -1020
-
-    @available(OSX, introduced: 10.7) @available(iOS, introduced: 3.0)
-    case requestBodyStreamExhausted = -1021
-
-    @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
-    static var backgroundSessionRequiresSharedContainer: Code {
-      return Code(rawValue: -995)!
+    public init(rawValue: Int) {
+      self.rawValue = rawValue
     }
+  }
+}
 
-    @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
-    static var backgroundSessionInUseByAnotherProcess: Code {
-      return Code(rawValue: -996)!
-    }
+public extension URLError.Code {
+  public static var unknown: URLError.Code {
+    return URLError.Code(rawValue: -1)
+  }
+  public static var cancelled: URLError.Code {
+    return URLError.Code(rawValue: -999)
+  }
+  public static var badURL: URLError.Code {
+    return URLError.Code(rawValue: -1000)
+  }
+  public static var timedOut: URLError.Code {
+    return URLError.Code(rawValue: -1001)
+  }
+  public static var unsupportedURL: URLError.Code {
+    return URLError.Code(rawValue: -1002)
+  }
+  public static var cannotFindHost: URLError.Code {
+    return URLError.Code(rawValue: -1003)
+  }
+  public static var cannotConnectToHost: URLError.Code {
+    return URLError.Code(rawValue: -1004)
+  }
+  public static var networkConnectionLost: URLError.Code {
+    return URLError.Code(rawValue: -1005)
+  }
+  public static var dnsLookupFailed: URLError.Code {
+    return URLError.Code(rawValue: -1006)
+  }
+  public static var httpTooManyRedirects: URLError.Code {
+    return URLError.Code(rawValue: -1007)
+  }
+  public static var resourceUnavailable: URLError.Code {
+    return URLError.Code(rawValue: -1008)
+  }
+  public static var notConnectedToInternet: URLError.Code {
+    return URLError.Code(rawValue: -1009)
+  }
+  public static var redirectToNonExistentLocation: URLError.Code {
+    return URLError.Code(rawValue: -1010)
+  }
+  public static var badServerResponse: URLError.Code {
+    return URLError.Code(rawValue: -1011)
+  }
+  public static var userCancelledAuthentication: URLError.Code {
+    return URLError.Code(rawValue: -1012)
+  }
+  public static var userAuthenticationRequired: URLError.Code {
+    return URLError.Code(rawValue: -1013)
+  }
+  public static var zeroByteResource: URLError.Code {
+    return URLError.Code(rawValue: -1014)
+  }
+  public static var cannotDecodeRawData: URLError.Code {
+    return URLError.Code(rawValue: -1015)
+  }
+  public static var cannotDecodeContentData: URLError.Code {
+    return URLError.Code(rawValue: -1016)
+  }
+  public static var cannotParseResponse: URLError.Code {
+    return URLError.Code(rawValue: -1017)
+  }
+  @available(OSX, introduced: 10.11) @available(iOS, introduced: 9.0)
+  public static var appTransportSecurityRequiresSecureConnection: URLError.Code {
+    return URLError.Code(rawValue: -1022)
+  }
+  public static var fileDoesNotExist: URLError.Code {
+    return URLError.Code(rawValue: -1100)
+  }
+  public static var fileIsDirectory: URLError.Code {
+    return URLError.Code(rawValue: -1101)
+  }
+  public static var noPermissionsToReadFile: URLError.Code {
+    return URLError.Code(rawValue: -1102)
+  }
+  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  public static var dataLengthExceedsMaximum: URLError.Code {
+    return URLError.Code(rawValue: -1103)
+  }
+  public static var secureConnectionFailed: URLError.Code {
+    return URLError.Code(rawValue: -1200)
+  }
+  public static var serverCertificateHasBadDate: URLError.Code {
+    return URLError.Code(rawValue: -1201)
+  }
+  public static var serverCertificateUntrusted: URLError.Code {
+    return URLError.Code(rawValue: -1202)
+  }
+  public static var serverCertificateHasUnknownRoot: URLError.Code {
+    return URLError.Code(rawValue: -1203)
+  }
+  public static var serverCertificateNotYetValid: URLError.Code {
+    return URLError.Code(rawValue: -1204)
+  }
+  public static var clientCertificateRejected: URLError.Code {
+    return URLError.Code(rawValue: -1205)
+  }
+  public static var clientCertificateRequired: URLError.Code {
+    return URLError.Code(rawValue: -1206)
+  }
+  public static var cannotLoadFromNetwork: URLError.Code {
+    return URLError.Code(rawValue: -2000)
+  }
+  public static var cannotCreateFile: URLError.Code {
+    return URLError.Code(rawValue: -3000)
+  }
+  public static var cannotOpenFile: URLError.Code {
+    return URLError.Code(rawValue: -3001)
+  }
+  public static var cannotCloseFile: URLError.Code {
+    return URLError.Code(rawValue: -3002)
+  }
+  public static var cannotWriteToFile: URLError.Code {
+    return URLError.Code(rawValue: -3003)
+  }
+  public static var cannotRemoveFile: URLError.Code {
+    return URLError.Code(rawValue: -3004)
+  }
+  public static var cannotMoveFile: URLError.Code {
+    return URLError.Code(rawValue: -3005)
+  }
+  public static var downloadDecodingFailedMidStream: URLError.Code {
+    return URLError.Code(rawValue: -3006)
+  }
+  public static var downloadDecodingFailedToComplete: URLError.Code {
+    return URLError.Code(rawValue: -3007)
+  }
 
-    @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
-    static var backgroundSessionWasDisconnected: Code {
-      return Code(rawValue: -997)!
-    }
+  @available(OSX, introduced: 10.7) @available(iOS, introduced: 3.0)
+  public static var internationalRoamingOff: URLError.Code {
+    return URLError.Code(rawValue: -1018)
+  }
+
+  @available(OSX, introduced: 10.7) @available(iOS, introduced: 3.0)
+  public static var callIsActive: URLError.Code {
+    return URLError.Code(rawValue: -1019)
+  }
+
+  @available(OSX, introduced: 10.7) @available(iOS, introduced: 3.0)
+  public static var dataNotAllowed: URLError.Code {
+    return URLError.Code(rawValue: -1020)
+  }
+
+  @available(OSX, introduced: 10.7) @available(iOS, introduced: 3.0)
+  public static var requestBodyStreamExhausted: URLError.Code {
+    return URLError.Code(rawValue: -1021)
+  }
+
+  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  public static var backgroundSessionRequiresSharedContainer: URLError.Code {
+    return URLError.Code(rawValue: -995)
+  }
+
+  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  public static var backgroundSessionInUseByAnotherProcess: URLError.Code {
+    return URLError.Code(rawValue: -996)
+  }
+
+  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  public static var backgroundSessionWasDisconnected: URLError.Code {
+    return URLError.Code(rawValue: -997)
   }
 }
 
@@ -1921,6 +2085,11 @@ public extension URLError {
     return .cannotParseResponse
   }
 
+  @available(OSX, introduced: 10.11) @available(iOS, introduced: 9.0)
+  public static var appTransportSecurityRequiresSecureConnection: URLError.Code {
+    return .appTransportSecurityRequiresSecureConnection
+  }
+
   public static var fileDoesNotExist: URLError.Code {
     return .fileDoesNotExist
   }
@@ -1931,6 +2100,11 @@ public extension URLError {
 
   public static var noPermissionsToReadFile: URLError.Code {
     return .noPermissionsToReadFile
+  }
+
+  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  public static var dataLengthExceedsMaximum: URLError.Code {
+    return .dataLengthExceedsMaximum
   }
 
   public static var secureConnectionFailed: URLError.Code {
@@ -2134,6 +2308,11 @@ extension URLError {
     fatalError("unavailable accessor can't be called")
   }
 
+  @available(*, unavailable, renamed: "appTransportSecurityRequiresSecureConnection")
+  public static var AppTransportSecurityRequiresSecureConnection: URLError.Code {
+    fatalError("unavailable accessor can't be called")
+  }
+
   @available(*, unavailable, renamed: "fileDoesNotExist")
   public static var FileDoesNotExist: URLError.Code {
     fatalError("unavailable accessor can't be called")
@@ -2146,6 +2325,11 @@ extension URLError {
 
   @available(*, unavailable, renamed: "noPermissionsToReadFile")
   public static var NoPermissionsToReadFile: URLError.Code {
+    fatalError("unavailable accessor can't be called")
+  }
+
+  @available(*, unavailable, renamed: "dataLengthExceedsMaximum")
+  public static var DataLengthExceedsMaximum: URLError.Code {
     fatalError("unavailable accessor can't be called")
   }
 

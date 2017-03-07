@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -16,11 +16,11 @@
 #include "SourceKit/Support/Logging.h"
 #include "SourceKit/Support/UIdent.h"
 
-#include "swift/Basic/Fallthrough.h"
 #include "swift/Frontend/Frontend.h"
 #include "swift/Frontend/PrintingDiagnosticConsumer.h"
 #include "swift/IDE/CodeCompletionCache.h"
 
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/MemoryBuffer.h"
 
 using namespace SourceKit;
@@ -595,7 +595,7 @@ getCodeCompletionKeywordKindForUID(UIdent uid) {
   if (uid == Keyword##kw##UID) {                                               \
     return CodeCompletionKeywordKind::kw_##kw;                                 \
   }
-#include "swift/Parse/Tokens.def"
+#include "swift/Syntax/TokenKinds.def"
 
   // FIXME: should warn about unexpected keyword kind.
   return CodeCompletionKeywordKind::None;
@@ -865,7 +865,7 @@ static bool canonicalizeFilterName(const char *origName,
         if (next == ':' || next == ')')
           continue;
       }
-      SWIFT_FALLTHROUGH;
+      LLVM_FALLTHROUGH;
     default:
       Result.push_back(curr);
       continue;

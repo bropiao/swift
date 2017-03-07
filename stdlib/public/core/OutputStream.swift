@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -250,6 +250,7 @@ func _getEnumCaseName<T>(_ value: T) -> UnsafePointer<CChar>?
 func _opaqueSummary(_ metadata: Any.Type) -> UnsafePointer<CChar>?
 
 /// Do our best to print a value that cannot be printed directly.
+@_semantics("optimize.sil.specialize.generic.never")
 internal func _adHocPrint_unlocked<T, TargetStream : TextOutputStream>(
     _ value: T, _ mirror: Mirror, _ target: inout TargetStream,
     isDebugPrint: Bool
@@ -270,16 +271,24 @@ internal func _adHocPrint_unlocked<T, TargetStream : TextOutputStream>(
       case .tuple:
         target.write("(")
         var first = true
-        for (_, value) in mirror.children {
+        for (label, value) in mirror.children {
           if first {
             first = false
           } else {
             target.write(", ")
           }
+
+          if let label = label {
+            if !label.isEmpty && label[label.startIndex] != "." {
+              target.write(label)
+              target.write(": ")
+            }
+          }
+
           _debugPrint_unlocked(value, &target)
         }
         target.write(")")
-      case .`struct`:
+      case .struct:
         printTypeName(mirror.subjectType)
         target.write("(")
         var first = true
@@ -296,7 +305,7 @@ internal func _adHocPrint_unlocked<T, TargetStream : TextOutputStream>(
           }
         }
         target.write(")")
-      case .`enum`:
+      case .enum:
         if let cString = _getEnumCaseName(value),
             let caseName = String(validatingUTF8: cString) {
           // Write the qualified type name in debugPrint.
@@ -310,7 +319,7 @@ internal func _adHocPrint_unlocked<T, TargetStream : TextOutputStream>(
           printTypeName(mirror.subjectType)
         }
         if let (_, value) = mirror.children.first {
-          if (Mirror(reflecting: value).displayStyle == .tuple) {
+          if Mirror(reflecting: value).displayStyle == .tuple {
             _debugPrint_unlocked(value, &target)
           } else {
             target.write("(")
@@ -336,6 +345,7 @@ internal func _adHocPrint_unlocked<T, TargetStream : TextOutputStream>(
 }
 
 @inline(never)
+@_semantics("optimize.sil.specialize.generic.never")
 @_semantics("stdlib_binary_only")
 internal func _print_unlocked<T, TargetStream : TextOutputStream>(
   _ value: T, _ target: inout TargetStream
@@ -392,6 +402,7 @@ func _toStringReadOnlyPrintable<T : CustomStringConvertible>(_ x: T) -> String {
 // `debugPrint`
 //===----------------------------------------------------------------------===//
 
+@_semantics("optimize.sil.specialize.generic.never")
 @inline(never)
 public func _debugPrint_unlocked<T, TargetStream : TextOutputStream>(
     _ value: T, _ target: inout TargetStream
@@ -415,6 +426,7 @@ public func _debugPrint_unlocked<T, TargetStream : TextOutputStream>(
   _adHocPrint_unlocked(value, mirror, &target, isDebugPrint: true)
 }
 
+@_semantics("optimize.sil.specialize.generic.never")
 internal func _dumpPrint_unlocked<T, TargetStream : TextOutputStream>(
     _ value: T, _ mirror: Mirror, _ target: inout TargetStream
 ) {
@@ -497,11 +509,13 @@ internal struct _Stdout : TextOutputStream {
   mutating func write(_ string: String) {
     if string.isEmpty { return }
 
-    if string._core.isASCII {
+    if let asciiBuffer = string._core.asciiBuffer {
       defer { _fixLifetime(string) }
 
-      _swift_stdlib_fwrite_stdout(UnsafePointer(string._core.startASCII),
-                                  string._core.count, 1)
+      _swift_stdlib_fwrite_stdout(
+        UnsafePointer(asciiBuffer.baseAddress!),
+        asciiBuffer.count,
+        1)
       return
     }
 

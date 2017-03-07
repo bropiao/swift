@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -17,11 +17,13 @@
 #ifndef SWIFT_LEXER_H
 #define SWIFT_LEXER_H
 
+#include "swift/AST/DiagnosticEngine.h"
 #include "swift/Basic/SourceLoc.h"
 #include "swift/Basic/SourceManager.h"
 #include "swift/Parse/Token.h"
-#include "swift/AST/DiagnosticEngine.h"
+#include "swift/Syntax/TokenSyntax.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/SaveAndRestore.h"
 
 namespace swift {
   class DiagnosticEngine;
@@ -34,6 +36,11 @@ enum class CommentRetentionMode {
   None,
   AttachToNextToken,
   ReturnAsTokens,
+};
+
+enum class TriviaRetentionMode {
+  WithoutTrivia,
+  WithTrivia,
 };
 
 /// Kinds of conflict marker which the lexer might encounter.
@@ -96,9 +103,23 @@ class Lexer {
 
   const CommentRetentionMode RetainComments;
 
+  const TriviaRetentionMode TriviaRetention;
+
   /// InSILBody - This is true when we're lexing the body of a SIL declaration
   /// in a SIL file.  This enables some context-sensitive lexing.
   bool InSILBody = false;
+
+  /// The current leading trivia for the next token.
+  ///
+  /// This is only preserved if this Lexer was constructed with
+  /// `TriviaRetentionMode::WithTrivia`.
+  syntax::TriviaList LeadingTrivia;
+
+  /// The current trailing trivia for the next token.
+  ///
+  /// This is only preserved if this Lexer was constructed with
+  /// `TriviaRetentionMode::WithTrivia`.
+  syntax::TriviaList TrailingTrivia;
   
 public:
   /// \brief Lexer state can be saved/restored to/from objects of this class.
@@ -112,12 +133,18 @@ public:
 
     State advance(unsigned Offset) const {
       assert(isValid());
-      return State(Loc.getAdvancedLoc(Offset));
+      return State(Loc.getAdvancedLoc(Offset), LeadingTrivia, TrailingTrivia);
     }
 
   private:
-    explicit State(SourceLoc Loc): Loc(Loc) {}
+    explicit State(SourceLoc Loc,
+                   syntax::TriviaList LeadingTrivia,
+                   syntax::TriviaList TrailingTrivia)
+      : Loc(Loc), LeadingTrivia(LeadingTrivia),
+        TrailingTrivia(TrailingTrivia) {}
     SourceLoc Loc;
+    syntax::TriviaList LeadingTrivia;
+    syntax::TriviaList TrailingTrivia;
     friend class Lexer;
   };
 
@@ -131,7 +158,8 @@ private:
   Lexer(const LangOptions &Options,
         const SourceManager &SourceMgr, DiagnosticEngine *Diags,
         unsigned BufferID, bool InSILMode,
-        CommentRetentionMode RetainComments);
+        CommentRetentionMode RetainComments,
+        TriviaRetentionMode TriviaRetention);
 
   /// @{
   /// Helper routines used in \c Lexer constructors.
@@ -156,8 +184,10 @@ public:
   Lexer(const LangOptions &Options,
         const SourceManager &SourceMgr, unsigned BufferID,
         DiagnosticEngine *Diags, bool InSILMode,
-        CommentRetentionMode RetainComments = CommentRetentionMode::None)
-      : Lexer(Options, SourceMgr, Diags, BufferID, InSILMode, RetainComments) {
+        CommentRetentionMode RetainComments = CommentRetentionMode::None,
+        TriviaRetentionMode TriviaRetention = TriviaRetentionMode::WithoutTrivia)
+      : Lexer(Options, SourceMgr, Diags, BufferID, InSILMode, RetainComments,
+              TriviaRetention) {
     primeLexer();
   }
 
@@ -166,13 +196,17 @@ public:
         const SourceManager &SourceMgr, unsigned BufferID,
         DiagnosticEngine *Diags, bool InSILMode,
         CommentRetentionMode RetainComments,
+        TriviaRetentionMode TriviaRetention,
         unsigned Offset, unsigned EndOffset)
-      : Lexer(Options, SourceMgr, Diags, BufferID, InSILMode, RetainComments) {
+      : Lexer(Options, SourceMgr, Diags, BufferID, InSILMode, RetainComments,
+              TriviaRetention) {
     assert(Offset <= EndOffset && "invalid range");
     initSubLexer(
         *this,
-        State(getLocForStartOfBuffer().getAdvancedLoc(Offset)),
-        State(getLocForStartOfBuffer().getAdvancedLoc(EndOffset)));
+        State(getLocForStartOfBuffer().getAdvancedLoc(Offset),
+              LeadingTrivia, TrailingTrivia),
+        State(getLocForStartOfBuffer().getAdvancedLoc(EndOffset),
+              LeadingTrivia, TrailingTrivia));
   }
 
   /// \brief Create a sub-lexer that lexes from the same buffer, but scans
@@ -183,7 +217,8 @@ public:
   /// \param EndState end of the subrange
   Lexer(Lexer &Parent, State BeginState, State EndState)
       : Lexer(Parent.LangOpts, Parent.SourceMgr, Parent.Diags, Parent.BufferID,
-              Parent.InSILMode, Parent.RetainComments) {
+              Parent.InSILMode, Parent.RetainComments,
+              Parent.TriviaRetention) {
     initSubLexer(Parent, BeginState, EndState);
   }
 
@@ -197,6 +232,9 @@ public:
     if (Result.isNot(tok::eof))
       lexImpl();
   }
+
+  /// Lex a full token including leading and trailing trivia.
+  syntax::RC<syntax::TokenSyntax> fullLex();
 
   bool isKeepingComments() const {
     return RetainComments == CommentRetentionMode::ReturnAsTokens;
@@ -227,19 +265,21 @@ public:
   }
 
   State getStateForEndOfTokenLoc(SourceLoc Loc) const {
-    return State(getLocForEndOfToken(SourceMgr, Loc));
+    return State(getLocForEndOfToken(SourceMgr, Loc), LeadingTrivia,
+                 TrailingTrivia);
   }
 
   /// \brief Restore the lexer state to a given one, that can be located either
   /// before or after the current position.
-  void restoreState(State S) {
+  void restoreState(State S, bool enableDiagnostics = false) {
     assert(S.isValid());
     CurPtr = getBufferPtrForSourceLoc(S.Loc);
+    LeadingTrivia = S.LeadingTrivia;
+    TrailingTrivia = S.TrailingTrivia;
     // Don't reemit diagnostics while readvancing the lexer.
-    auto TmpDiags = Diags;
-    Diags = nullptr;
+    llvm::SaveAndRestore<DiagnosticEngine*>
+      D(Diags, enableDiagnostics ? Diags : nullptr);
     lexImpl();
-    Diags = TmpDiags;
   }
 
   /// \brief Restore the lexer state to a given state that is located before
@@ -297,6 +337,8 @@ public:
   /// to the whitespace offset.
   static SourceLoc getLocForStartOfToken(SourceManager &SM, unsigned BufferID,
                                          unsigned Offset);
+
+  static SourceLoc getLocForStartOfToken(SourceManager &SM, SourceLoc Loc);
 
   /// Retrieve the start location of the line containing the given location.
   /// the given location.
@@ -424,6 +466,11 @@ private:
 
   void formToken(tok Kind, const char *TokStart);
 
+  /// Advance to the end of the line but leave the current buffer pointer
+  /// at that newline character.
+  void skipUpToEndOfLine();
+
+  /// Advance past the next newline character.
   void skipToEndOfLine();
 
   /// Skip to the end of the line of a // comment.
@@ -439,6 +486,12 @@ private:
   void lexOperatorIdentifier();
   void lexHexNumber();
   void lexNumber();
+  void lexTrivia(syntax::TriviaList &T, bool StopAtFirstNewline = false);
+  Optional<syntax::TriviaPiece> lexWhitespace(bool StopAtFirstNewline);
+  Optional<syntax::TriviaPiece> lexComment();
+  Optional<syntax::TriviaPiece> lexSingleLineComment(syntax::TriviaKind Kind);
+  Optional<syntax::TriviaPiece> lexBlockComment(syntax::TriviaKind Kind);
+  Optional<syntax::TriviaPiece> lexDocComment();
   static unsigned lexUnicodeEscape(const char *&CurPtr, Lexer *Diags);
 
   unsigned lexCharacter(const char *&CurPtr,

@@ -2,31 +2,35 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
-//
-// A storage structure for holding a destructured rvalue with an optional
-// cleanup(s).
-// Ownership of the rvalue can be "forwarded" to disable the associated
-// cleanup(s).
-//
+///
+/// \file
+///
+/// A storage structure for holding a destructured rvalue with an optional
+/// cleanup(s).
+///
+/// Ownership of the rvalue can be "forwarded" to disable the associated
+/// cleanup(s).
+///
 //===----------------------------------------------------------------------===//
 
 #ifndef SWIFT_LOWERING_RVALUE_H
 #define SWIFT_LOWERING_RVALUE_H
 
 #include "ManagedValue.h"
-#include "SILGenFunction.h"
 #include "llvm/ADT/SmallVector.h"
 
 namespace swift {
 namespace Lowering {
-  class Initialization;
+
+class Initialization;
+class SILGenFunction;
 
 /// An "exploded" SIL rvalue, in which tuple values are recursively
 /// destructured. (In SILGen we don't try to explode structs, because doing so
@@ -52,6 +56,10 @@ class RValue {
   /// Private constructor used by copy().
   RValue(const RValue &copied, SILGenFunction &gen, SILLocation l);
   
+  /// Construct an RValue from a pre-exploded set of
+  /// ManagedValues. Used to implement the extractElement* methods.
+  RValue(ArrayRef<ManagedValue> values, CanType type);
+
 public:
   /// Creates an invalid RValue object, in a "used" state.
   RValue() : elementsToBeAdded(Used) {}
@@ -90,7 +98,8 @@ public:
 
   /// Construct an RValue from a pre-exploded set of
   /// ManagedValues. Used to implement the extractElement* methods.
-  RValue(ArrayRef<ManagedValue> values, CanType type);
+  static RValue withPreExplodedElements(ArrayRef<ManagedValue> values,
+                                        CanType type);
   
   /// Create an RValue to which values will be subsequently added using
   /// addElement(), with the level of tuple expansion in the input specified

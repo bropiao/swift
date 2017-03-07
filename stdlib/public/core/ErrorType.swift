@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 import SwiftShims
@@ -113,7 +113,11 @@ import SwiftShims
 public protocol Error {
   var _domain: String { get }
   var _code: Int { get }
-  var _userInfo: Any? { get }
+
+  // Note: _userInfo is always an NSDictionary, but we cannot use that type here
+  // because the standard library cannot depend on Foundation. However, the
+  // underscore implies that we control all implementations of this requirement.
+  var _userInfo: AnyObject? { get }
 
 #if _runtime(_ObjC)
   func _getEmbeddedNSError() -> AnyObject?
@@ -203,7 +207,7 @@ extension Error {
     return String(reflecting: type(of: self))
   }
 
-  public var _userInfo: Any? {
+  public var _userInfo: AnyObject? {
 #if _runtime(_ObjC)
     return _stdlib_getErrorDefaultUserInfo(self)
 #else

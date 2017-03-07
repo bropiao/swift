@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 // https://bugs.swift.org/browse/SR-1461
 
@@ -11,6 +11,8 @@ let c :[X]()  // expected-error{{unexpected initializer in pattern; did you mean
 let d : [X]()  // expected-error{{unexpected initializer in pattern; did you mean to use '='?}} {{7-8==}}
 
 let e: X(), ee: Int  // expected-error{{unexpected initializer in pattern; did you mean to use '='?}} {{6-7= =}}
+
+let f:/*comment*/[X]()  // expected-error{{unexpected initializer in pattern; did you mean to use '='?}} {{6-7= = }}
 
 var _1 = 1, _2 = 2
 

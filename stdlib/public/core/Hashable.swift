@@ -2,20 +2,13 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
-
-// FIXME(ABI)(compiler limitation): This protocol exists to identify
-// hashable types.  It is used for defining an imitation of a generic
-// subscript on `Dictionary<AnyHashable, *>`.
-public protocol _Hashable {
-  func _toAnyHashable() -> AnyHashable
-}
 
 /// A type that provides an integer hash value.
 ///
@@ -90,7 +83,7 @@ public protocol _Hashable {
 ///         print("New tap detected at (\(nextTap.x), \(nextTap.y)).")
 ///     }
 ///     // Prints "New tap detected at (0, 1).")
-public protocol Hashable : _Hashable, Equatable {
+public protocol Hashable : Equatable {
   /// The hash value.
   ///
   /// Hash values are not guaranteed to be equal across different executions of

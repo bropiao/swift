@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -21,6 +21,7 @@
 #include "swift/AST/Decl.h"
 #include "swift/AST/Module.h"
 #include "swift/SIL/SILFunction.h"
+#include "swift/SIL/InstructionUtils.h"
 #include "swift/Basic/LLVM.h"
 #include "swift/Basic/ClusteredBitVector.h"
 #include "swift/Basic/SuccessorMap.h"
@@ -68,11 +69,12 @@ namespace clang {
   class Type;
   namespace CodeGen {
     class CGFunctionInfo;
+    class CodeGenModule;
   }
 }
 
 namespace swift {
-  class ArchetypeBuilder;
+  class GenericSignatureBuilder;
   class ASTContext;
   class BraceStmt;
   class CanType;
@@ -275,6 +277,13 @@ public:
   /// Emit type metadata records for types without explicit protocol conformance.
   void emitTypeMetadataRecords();
 
+  /// Emit reflection metadata records for builtin and imported types referenced
+  /// from this module.
+  void emitBuiltinReflectionMetadata();
+
+  /// Emit a symbol identifying the reflection metadata version.
+  void emitReflectionMetadataVersion();
+
   /// Emit everything which is reachable from already emitted IR.
   void emitLazyDefinitions();
   
@@ -359,8 +368,17 @@ public:
   ModuleDecl *getSwiftModule() const;
   Lowering::TypeConverter &getSILTypes() const;
   SILModule &getSILModule() const { return IRGen.SIL; }
+  SILModuleConventions silConv;
+
   llvm::SmallString<128> OutputFilename;
-  
+
+#ifndef NDEBUG
+  // Used for testing ConformanceCollector.
+  ConformanceCollector EligibleConfs;
+  SILInstruction *CurrentInst = nullptr;
+  SILWitnessTable *CurrentWitnessTable = nullptr;
+#endif
+
   /// Order dependency -- TargetInfo must be initialized after Opts.
   const SwiftTargetInfo TargetInfo;
   /// Holds lexical scope info, etc. Is a nullptr if we compile without -g.
@@ -375,6 +393,9 @@ public:
 
   /// Should we add value names to local IR values?
   bool EnableValueNames = false;
+
+  // Is swifterror returned in a register by the target ABI.
+  bool IsSwiftErrorInRegister;
 
   llvm::Type *VoidTy;                  /// void (usually {})
   llvm::IntegerType *Int1Ty;           /// i1
@@ -410,7 +431,6 @@ public:
   llvm::PointerType *UnownedReferencePtrTy;/// %swift.unowned_reference*
   llvm::Constant *RefCountedNull;      /// %swift.refcounted* null
   llvm::StructType *FunctionPairTy;    /// { i8*, %swift.refcounted* }
-  llvm::StructType *WitnessFunctionPairTy;    /// { i8*, %witness.table* }
   llvm::FunctionType *DeallocatingDtorTy; /// void (%swift.refcounted*)
   llvm::StructType *TypeMetadataStructTy; /// %swift.type = type { ... }
   llvm::PointerType *TypeMetadataPtrTy;/// %swift.type*
@@ -456,6 +476,8 @@ public:
   llvm::CallingConv::ID C_CC;          /// standard C calling convention
   llvm::CallingConv::ID DefaultCC;     /// default calling convention
   llvm::CallingConv::ID RegisterPreservingCC; /// lightweight calling convention
+  llvm::CallingConv::ID SwiftCC;     /// swift calling convention
+  bool UseSwiftCC;
 
   llvm::FunctionType *getAssociatedTypeMetadataAccessFunctionTy();
   llvm::FunctionType *getAssociatedTypeWitnessTableAccessFunctionTy();
@@ -498,6 +520,8 @@ public:
     case ReferenceCounting::Error:
       llvm_unreachable("unowned references to this type are not supported");
     }
+
+    llvm_unreachable("Not a valid ReferenceCounting.");
   }
   
   /// Return the spare bit mask to use for types that comprise heap object
@@ -524,6 +548,8 @@ public:
   LLVM_ATTRIBUTE_NORETURN
   void fatal_unimplemented(SourceLoc, StringRef Message);
   void error(SourceLoc loc, const Twine &message);
+
+  bool useDllStorage();
 
 private:
   Size PtrSize;
@@ -570,7 +596,6 @@ public:
   ExplosionSchema getSchema(SILType T);
   unsigned getExplosionSize(SILType T);
   llvm::PointerType *isSingleIndirectValue(SILType T);
-  llvm::PointerType *requiresIndirectResult(SILType T);
   bool isPOD(SILType type, ResilienceExpansion expansion);
   clang::CanQual<clang::Type> getClangType(CanType type);
   clang::CanQual<clang::Type> getClangType(SILType type);
@@ -581,6 +606,8 @@ public:
            "requesting clang AST context without clang importer!");
     return *ClangASTContext;
   }
+
+  clang::CodeGen::CodeGenModule &getClangCGM() const;
 
   bool isResilient(NominalTypeDecl *decl, ResilienceExpansion expansion);
   ResilienceExpansion getResilienceExpansionForAccess(NominalTypeDecl *decl);
@@ -721,6 +748,14 @@ private:
 
 //--- Remote reflection metadata --------------------------------------------
 public:
+  /// Section names.
+  std::string FieldTypeSection;
+  std::string BuiltinTypeSection;
+  std::string AssociatedTypeSection;
+  std::string CaptureDescriptorSection;
+  std::string ReflectionStringsSection;
+  std::string ReflectionTypeRefSection;
+
   /// Builtin types referenced by types in this module when emitting
   /// reflection metadata.
   llvm::SetVector<CanType> BuiltinTypes;
@@ -741,20 +776,38 @@ public:
   llvm::Constant *getAddrOfCaptureDescriptor(SILFunction &caller,
                                              CanSILFunctionType origCalleeType,
                                              CanSILFunctionType substCalleeType,
-                                             ArrayRef<Substitution> subs,
+                                             SubstitutionList subs,
                                              const HeapLayout &layout);
   llvm::Constant *getAddrOfBoxDescriptor(CanType boxedType);
 
   void emitAssociatedTypeMetadataRecord(const ProtocolConformance *Conformance);
   void emitFieldMetadataRecord(const NominalTypeDecl *Decl);
+
+  /// Emit a reflection metadata record for a builtin type referenced
+  /// from this module.
+  void emitBuiltinTypeMetadataRecord(CanType builtinType);
+
+  /// Emit a reflection metadata record for an imported type referenced
+  /// from this module.
+  void emitOpaqueTypeMetadataRecord(const NominalTypeDecl *nominalDecl);
+
+  /// Some nominal type declarations require us to emit a fixed-size type
+  /// descriptor, because they have special layout considerations.
+  bool shouldEmitOpaqueTypeMetadataRecord(const NominalTypeDecl *nominalDecl);
+
+  /// Emit reflection metadata records for builtin and imported types referenced
+  /// from this module.
   void emitBuiltinReflectionMetadata();
+
+  /// Emit a symbol identifying the reflection metadata version.
   void emitReflectionMetadataVersion();
-  std::string getBuiltinTypeMetadataSectionName();
-  std::string getFieldTypeMetadataSectionName();
-  std::string getAssociatedTypeMetadataSectionName();
-  std::string getCaptureDescriptorMetadataSectionName();
-  std::string getReflectionStringsSectionName();
-  std::string getReflectionTypeRefSectionName();
+
+  const char *getBuiltinTypeMetadataSectionName();
+  const char *getFieldTypeMetadataSectionName();
+  const char *getAssociatedTypeMetadataSectionName();
+  const char *getCaptureDescriptorMetadataSectionName();
+  const char *getReflectionStringsSectionName();
+  const char *getReflectionTypeRefSectionName();
 
 //--- Runtime ---------------------------------------------------------------
 public:
@@ -850,7 +903,7 @@ public:
                                         ValueWitness index,
                                         ForDefinition_t forDefinition);
   llvm::Constant *getAddrOfValueWitnessTable(CanType concreteType,
-                                         llvm::Type *definitionType = nullptr);
+                                             ConstantInit init = ConstantInit());
   Optional<llvm::Function*> getAddrOfIVarInitDestroy(ClassDecl *cd,
                                                      bool isDestroyer,
                                                      bool isForeign,
@@ -859,8 +912,7 @@ public:
                                   bool isIndirect,
                                   bool isPattern,
                                   bool isConstant,
-                                  llvm::Constant *init,
-                                  std::unique_ptr<llvm::GlobalVariable> replace,
+                                  ConstantInitFuture init,
                                   llvm::StringRef section = {});
 
   llvm::Constant *getAddrOfTypeMetadata(CanType concreteType, bool isPattern);
@@ -876,10 +928,10 @@ public:
                                                ForDefinition_t forDefinition);
   llvm::Constant *getAddrOfForeignTypeMetadataCandidate(CanType concreteType);
   llvm::Constant *getAddrOfNominalTypeDescriptor(NominalTypeDecl *D,
-                                        llvm::Type *definitionType);
+                                                 ConstantInitFuture definition);
   llvm::Constant *getAddrOfProtocolDescriptor(ProtocolDecl *D,
-                                              ForDefinition_t forDefinition,
-                                              llvm::Type *definitionType);
+                                              ConstantInit definition =
+                                                ConstantInit());
   llvm::Constant *getAddrOfObjCClass(ClassDecl *D,
                                      ForDefinition_t forDefinition);
   Address getAddrOfObjCClassRef(ClassDecl *D);
@@ -906,7 +958,7 @@ public:
                                                CanType conformingType,
                                                ForDefinition_t forDefinition);
   llvm::Constant *getAddrOfWitnessTable(const NormalProtocolConformance *C,
-                                        llvm::Type *definitionTy = nullptr);
+                                    ConstantInit definition = ConstantInit());
   llvm::Constant *
   getAddrOfGenericWitnessTableCache(const NormalProtocolConformance *C,
                                     ForDefinition_t forDefinition);
@@ -918,16 +970,15 @@ public:
                                            AssociatedTypeDecl *associatedType);
   llvm::Function *getAddrOfAssociatedTypeWitnessTableAccessFunction(
                                            const NormalProtocolConformance *C,
-                                           AssociatedTypeDecl *associatedType,
+                                           CanType depAssociatedType,
                                            ProtocolDecl *requiredProtocol);
 
   Address getAddrOfObjCISAMask();
 
-  StringRef mangleType(CanType type, SmallVectorImpl<char> &buffer);
- 
-  // Get the ArchetypeBuilder for the currently active generic context. Crashes
-  // if there is no generic context.
-  ArchetypeBuilder &getContextArchetypes();
+  /// Retrieve the generic environment for the current generic context.
+  ///
+  /// Fails if there is no generic context.
+  GenericEnvironment *getGenericEnvironment();
 
   ConstantReference
   getAddrOfLLVMVariableOrGOTEquivalent(LinkEntity entity, Alignment alignment,
@@ -947,10 +998,16 @@ public:
   /// the binary.
   void setTrueConstGlobal(llvm::GlobalVariable *var);
 
+  /// Add the swiftself attribute.
+  void addSwiftSelfAttributes(llvm::AttributeSet &attrs, unsigned argIndex);
+
+  /// Add the swifterror attribute.
+  void addSwiftErrorAttributes(llvm::AttributeSet &attrs, unsigned argIndex);
+
 private:
   llvm::Constant *getAddrOfLLVMVariable(LinkEntity entity,
                                         Alignment alignment,
-                                        llvm::Type *definitionType,
+                                        ConstantInit definition,
                                         llvm::Type *defaultType,
                                         DebugTypeInfo debugType);
   llvm::Constant *getAddrOfLLVMVariable(LinkEntity entity,
@@ -960,10 +1017,13 @@ private:
                                         DebugTypeInfo debugType);
   ConstantReference getAddrOfLLVMVariable(LinkEntity entity,
                                         Alignment alignment,
-                                        llvm::Type *definitionType,
+                                        ConstantInit definition,
                                         llvm::Type *defaultType,
                                         DebugTypeInfo debugType,
                                         SymbolReferenceKind refKind);
+
+  void checkEligibleConf(const ProtocolConformance *Conf);
+  void checkEligibleMetaType(NominalTypeDecl *NT);
 
   void emitLazyPrivateDefinitions();
   void addRuntimeResolvableType(CanType type);

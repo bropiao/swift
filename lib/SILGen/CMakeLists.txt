@@ -2,11 +2,14 @@ add_swift_library(swiftSILGen STATIC
   ArgumentSource.cpp
   Cleanup.cpp
   Condition.cpp
+  FormalEvaluation.cpp
   ManagedValue.cpp
   RValue.cpp
+  SwitchCaseFullExpr.cpp
   SILGen.cpp
   SILGenApply.cpp
   SILGenBridging.cpp
+  SILGenBuilder.cpp
   SILGenBuiltin.cpp
   SILGenConstructor.cpp
   SILGenConvert.cpp
@@ -26,4 +29,6 @@ add_swift_library(swiftSILGen STATIC
   SILGenProlog.cpp
   SILGenStmt.cpp
   SILGenType.cpp
-  LINK_LIBRARIES swiftSIL)
+  LINK_LIBRARIES
+    swiftSIL
+)

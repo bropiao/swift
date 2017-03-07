@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -28,9 +28,18 @@ using namespace reflection;
 
 TypeRefBuilder::TypeRefBuilder() : TC(*this) {}
 
-const AssociatedTypeDescriptor * TypeRefBuilder::
-lookupAssociatedTypes(const std::string &MangledTypeName,
-                      const DependentMemberTypeRef *DependentMember) {
+const TypeRef * TypeRefBuilder::
+lookupTypeWitness(const std::string &MangledTypeName,
+                  const std::string &Member,
+                  const TypeRef *Protocol) {
+  TypeRefID key;
+  key.addString(MangledTypeName);
+  key.addString(Member);
+  key.addPointer(Protocol);
+  auto found = AssociatedTypeCache.find(key);
+  if (found != AssociatedTypeCache.end())
+    return found->second;
+
   // Cache missed - we need to look through all of the assocty sections
   // for all images that we've been notified about.
   for (auto &Info : ReflectionInfos) {
@@ -38,15 +47,25 @@ lookupAssociatedTypes(const std::string &MangledTypeName,
       std::string ConformingTypeName(AssocTyDescriptor.ConformingTypeName);
       if (ConformingTypeName.compare(MangledTypeName) != 0)
         continue;
+
       std::string ProtocolMangledName(AssocTyDescriptor.ProtocolTypeName);
-      auto DemangledProto = Demangle::demangleTypeAsNode(ProtocolMangledName);
+      Demangle::Demangler Dem;
+      auto DemangledProto = Dem.demangleType(ProtocolMangledName);
       auto TR = swift::remote::decodeMangledType(*this, DemangledProto);
 
-      auto &Conformance = *DependentMember->getProtocol();
-      if (auto Protocol = dyn_cast<ProtocolTypeRef>(TR)) {
-        if (*Protocol != Conformance)
+      if (Protocol != TR)
+        continue;
+
+      for (auto &AssocTy : AssocTyDescriptor) {
+        if (Member.compare(AssocTy.getName()) != 0)
           continue;
-        return &AssocTyDescriptor;
+
+        auto SubstitutedTypeName = AssocTy.getMangledSubstitutedTypeName();
+        auto Demangled = Dem.demangleType(SubstitutedTypeName);
+        auto *TypeWitness = swift::remote::decodeMangledType(*this, Demangled);
+
+        AssociatedTypeCache.insert(std::make_pair(key, TypeWitness));
+        return TypeWitness;
       }
     }
   }
@@ -54,20 +73,28 @@ lookupAssociatedTypes(const std::string &MangledTypeName,
 }
 
 const TypeRef * TypeRefBuilder::
-getDependentMemberTypeRef(const std::string &MangledTypeName,
-                          const DependentMemberTypeRef *DependentMember) {
+lookupSuperclass(const std::string &MangledTypeName) {
+  // Superclasses are recorded as a special associated type named 'super'
+  // on the 'AnyObject' protocol.
+  return lookupTypeWitness(MangledTypeName, "super",
+                           ProtocolTypeRef::create(*this, "s9AnyObject_p"));
+}
 
-  if (auto AssocTys = lookupAssociatedTypes(MangledTypeName, DependentMember)) {
-    for (auto &AssocTy : *AssocTys) {
-      if (DependentMember->getMember().compare(AssocTy.getName()) != 0)
-        continue;
+const TypeRef * TypeRefBuilder::
+lookupSuperclass(const TypeRef *TR) {
+  const TypeRef *Superclass = nullptr;
 
-      auto SubstitutedTypeName = AssocTy.getMangledSubstitutedTypeName();
-      auto Demangled = Demangle::demangleTypeAsNode(SubstitutedTypeName);
-      return swift::remote::decodeMangledType(*this, Demangled);
-    }
+  if (auto *Nominal = dyn_cast<NominalTypeRef>(TR)) {
+    Superclass = lookupSuperclass(Nominal->getMangledName());
+  } else {
+    auto BG = cast<BoundGenericTypeRef>(TR);
+    Superclass = lookupSuperclass(BG->getMangledName());
   }
-  return nullptr;
+
+  if (Superclass == nullptr)
+    return nullptr;
+
+  return Superclass->subst(*this, TR->getSubstMap());
 }
 
 const FieldDescriptor *
@@ -104,6 +131,7 @@ TypeRefBuilder::getFieldTypeRefs(const TypeRef *TR, const FieldDescriptor *FD) {
 
   auto Subs = TR->getSubstMap();
 
+  Demangle::Demangler Dem;
   std::vector<FieldTypeInfo> Fields;
   for (auto &Field : *FD) {
     auto FieldName = Field.getFieldName();
@@ -114,8 +142,7 @@ TypeRefBuilder::getFieldTypeRefs(const TypeRef *TR, const FieldDescriptor *FD) {
       continue;
     }
 
-    auto Demangled
-      = Demangle::demangleTypeAsNode(Field.getMangledTypeName());
+    auto Demangled = Dem.demangleType(Field.getMangledTypeName());
     auto Unsubstituted = swift::remote::decodeMangledType(*this, Demangled);
     if (!Unsubstituted)
       return {};
@@ -139,6 +166,8 @@ TypeRefBuilder::getBuiltinTypeInfo(const TypeRef *TR) {
     MangledName = B->getMangledName();
   else if (auto N = dyn_cast<NominalTypeRef>(TR))
     MangledName = N->getMangledName();
+  else if (auto B = dyn_cast<BoundGenericTypeRef>(TR))
+    MangledName = B->getMangledName();
   else
     return nullptr;
 
@@ -179,11 +208,12 @@ ClosureContextInfo
 TypeRefBuilder::getClosureContextInfo(const CaptureDescriptor &CD) {
   ClosureContextInfo Info;
 
+  Demangle::Demangler Dem;
   for (auto i = CD.capture_begin(), e = CD.capture_end(); i != e; ++i) {
     const TypeRef *TR = nullptr;
     if (i->hasMangledTypeName()) {
       auto MangledName = i->getMangledTypeName();
-      auto DemangleTree = Demangle::demangleTypeAsNode(MangledName);
+      auto DemangleTree = Dem.demangleType(MangledName);
       TR = swift::remote::decodeMangledType(*this, DemangleTree);
     }
     Info.CaptureTypes.push_back(TR);
@@ -193,7 +223,7 @@ TypeRefBuilder::getClosureContextInfo(const CaptureDescriptor &CD) {
     const TypeRef *TR = nullptr;
     if (i->hasMangledTypeName()) {
       auto MangledName = i->getMangledTypeName();
-      auto DemangleTree = Demangle::demangleTypeAsNode(MangledName);
+      auto DemangleTree = Dem.demangleType(MangledName);
       TR = swift::remote::decodeMangledType(*this, DemangleTree);
     }
 
@@ -221,7 +251,8 @@ TypeRefBuilder::dumpTypeRef(const std::string &MangledName,
   auto TypeName = Demangle::demangleTypeAsString(MangledName);
   OS << TypeName << '\n';
 
-  auto DemangleTree = Demangle::demangleTypeAsNode(MangledName);
+  Demangle::Demangler Dem;
+  auto DemangleTree = Dem.demangleType(MangledName);
   auto TR = swift::remote::decodeMangledType(*this, DemangleTree);
   if (!TR) {
     OS << "!!! Invalid typeref: " << MangledName << '\n';

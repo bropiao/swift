@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 infix operator %%%
 infix operator %%%%
@@ -19,7 +19,7 @@ precedencegroup ReallyHighPrecedence {
   associativity: left
 }
 
-infix func fn_binary(_ lhs: Int, rhs: Int) {}  // expected-error {{'infix' requires a function with an operator identifier}}
+infix func fn_binary(_ lhs: Int, rhs: Int) {}  // expected-error {{'infix' modifier is not required or allowed on func declarations}}
 
 
 func ++++(lhs: X, rhs: X) -> X {}
@@ -62,7 +62,7 @@ prefix func +// this should be a comment, not an operator
 prefix func -/* this also should be a comment, not an operator */
 (arg: Int) -> Int { return arg }
 
-func +*/ () {}   // expected-error {{expected identifier in function declaration}} expected-error {{unexpected end of block comment}} expected-error {{braced block of statements is an unused closure}} expected-error{{begin with a closure}} expected-note{{discard the result}} {{13-13=_ = }} expected-error{{expression resolves to an unused function}}
+func +*/ () {}   // expected-error {{expected identifier in function declaration}} expected-error {{unexpected end of block comment}} expected-error {{closure expression is unused}} expected-error{{top-level statement cannot begin with a closure expression}} expected-note{{did you mean to use a 'do' statement?}} {{13-13=do }}
 func errors() {
   */    // expected-error {{unexpected end of block comment}}
   
@@ -142,12 +142,14 @@ func test_14705150() {
 
 }
 
-prefix postfix func ++(x: Int) {} // expected-error {{attribute 'prefix' cannot be combined with this attribute}}
-postfix prefix func ++(x: Int) {} // expected-error {{attribute 'postfix' cannot be combined with this attribute}}
+prefix postfix func ++(x: Int) {} // expected-error {{'postfix' contradicts previous modifier 'prefix'}} {{8-16=}}
+postfix prefix func ++(x: Float) {} // expected-error {{'prefix' contradicts previous modifier 'postfix'}} {{9-16=}}
+postfix prefix infix func ++(x: Double) {} // expected-error {{'prefix' contradicts previous modifier 'postfix'}} {{9-16=}} expected-error {{'infix' contradicts previous modifier 'postfix'}} {{16-22=}}
+infix prefix func +-+(x: Int, y: Int) {} // expected-error {{'infix' modifier is not required or allowed on func declarations}} {{1-7=}} expected-error{{'prefix' contradicts previous modifier 'infix'}} {{7-14=}}
 
 // Don't allow one to define a postfix '!'; it's built into the
-// language.
-postfix operator!  // expected-error {{cannot declare a custom postfix '!' operator}}
+// language. Also illegal to have any postfix operator starting with '!'.
+postfix operator !  // expected-error {{cannot declare a custom postfix '!' operator}} expected-error {{expected operator name in operator declaration}}
 prefix operator &  // expected-error {{cannot declare a custom prefix '&' operator}}
 
 // <rdar://problem/14607026> Restrict use of '<' and '>' as prefix/postfix operator names

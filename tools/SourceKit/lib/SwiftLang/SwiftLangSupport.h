@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -47,7 +47,13 @@ namespace ide {
   enum class SyntaxNodeKind : uint8_t;
   enum class SyntaxStructureKind : uint8_t;
   enum class SyntaxStructureElementKind : uint8_t;
+  enum class RangeKind : int8_t;
   class CodeCompletionConsumer;
+
+  enum class NameKind {
+    ObjC,
+    Swift,
+  };
 }
 }
 
@@ -249,12 +255,16 @@ public:
   static SourceKit::UIdent getUIDForSyntaxStructureElementKind(
       swift::ide::SyntaxStructureElementKind Kind);
 
-  static SourceKit::UIdent getUIDForSymbol(swift::index::SymbolKind kind,
-                                           swift::index::SymbolSubKindSet subKinds,
+  static SourceKit::UIdent getUIDForSymbol(swift::index::SymbolInfo sym,
                                            bool isRef);
+
+  static SourceKit::UIdent getUIDForRangeKind(swift::ide::RangeKind Kind);
 
   static std::vector<UIdent> UIDsFromDeclAttributes(const swift::DeclAttributes &Attrs);
 
+  static SourceKit::UIdent getUIDForNameKind(swift::ide::NameKind Kind);
+
+  static swift::ide::NameKind getNameKindForUID(SourceKit::UIdent Id);
 
   static bool printDisplayName(const swift::ValueDecl *D, llvm::raw_ostream &OS);
 
@@ -374,8 +384,18 @@ public:
                                EditorConsumer &Consumer) override;
 
   void getCursorInfo(StringRef Filename, unsigned Offset,
+                     unsigned Length, bool Actionables,
                      ArrayRef<const char *> Args,
                      std::function<void(const CursorInfo &)> Receiver) override;
+
+  void getNameInfo(StringRef Filename, unsigned Offset,
+                   NameTranslatingInfo &Input,
+                   ArrayRef<const char *> Args,
+                   std::function<void(const NameTranslatingInfo &)> Receiver) override;
+
+  void getRangeInfo(StringRef Filename, unsigned Offset, unsigned Length,
+                    ArrayRef<const char *> Args,
+                    std::function<void(const RangeInfo&)> Receiver) override;
 
   void getCursorInfoFromUSR(
       StringRef Filename, StringRef USR, ArrayRef<const char *> Args,
@@ -404,7 +424,7 @@ namespace trace {
   void initTraceInfo(trace::SwiftInvocation &SwiftArgs,
                      StringRef InputFile,
                      ArrayRef<const char *> Args);
-  
+
   void initTraceFiles(trace::SwiftInvocation &SwiftArgs,
                       swift::CompilerInstance &CI);
 }
@@ -420,6 +440,6 @@ public:
   ~CloseClangModuleFiles();
 };
 
-} // namespace SourceKit.
+} // namespace SourceKit
 
 #endif

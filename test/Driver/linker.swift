@@ -48,7 +48,7 @@
 // RUN: %swiftc_driver -driver-print-jobs -target arm64-apple-tvos9.0        %s | %FileCheck -check-prefix NO_ARCLITE %s
 // RUN: %swiftc_driver -driver-print-jobs -target armv7k-apple-watchos2.0    %s | %FileCheck -check-prefix NO_ARCLITE %s
 
-// RUN: rm -rf %t && mkdir %t
+// RUN: rm -rf %t && mkdir -p %t
 // RUN: touch %t/a.o
 // RUN: %swiftc_driver -driver-print-jobs -target x86_64-apple-macosx10.9 %s %t/a.o -o linker 2>&1 | %FileCheck -check-prefix COMPILE_AND_LINK %s
 // RUN: %swiftc_driver -driver-print-jobs -target x86_64-apple-macosx10.9 %s %t/a.o -driver-use-filelists -o linker 2>&1 | %FileCheck -check-prefix FILELIST %s
@@ -58,7 +58,7 @@
 
 // There are more RUN lines further down in the file.
 
-// REQUIRES: X86
+// REQUIRES: CODEGENERATOR=X86
 
 // FIXME: Need to set up a sysroot for osx so the DEBUG checks work on linux/freebsd
 // rdar://problem/19692770
@@ -278,7 +278,7 @@
 // RUN: mkdir -p %t/DISTINCTIVE-PATH/usr/bin/
 // RUN: touch %t/DISTINCTIVE-PATH/usr/bin/ld
 // RUN: chmod +x %t/DISTINCTIVE-PATH/usr/bin/ld
-// RUN: ln %swift_driver_plain %t/DISTINCTIVE-PATH/usr/bin/swiftc
+// RUN: %hardlink-or-copy(from: %swift_driver_plain, to: %t/DISTINCTIVE-PATH/usr/bin/swiftc)
 // RUN: %t/DISTINCTIVE-PATH/usr/bin/swiftc %s -### | %FileCheck -check-prefix=RELATIVE-LINKER %s
 
 // RELATIVE-LINKER: /DISTINCTIVE-PATH/usr/bin/swift

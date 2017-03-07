@@ -49,7 +49,7 @@ func f1() {
 
   if let ifletf1 = Int?(1) {
 // FIXME: lookup incorrect for if let binding.
-// CHECK: decl: struct Int : {{.*}} for 'ifletf1' usr=s:vF14swift_ide_test2f1FT_T_L_7ifletf1Si
+// CHECK: decl: struct Int : {{.*}} for 'ifletf1' usr=s:14swift_ide_test2f1yyF7ifletf1L_Siv
   }
 }
 
@@ -64,7 +64,7 @@ class Myclass2 {
 
     arr1.append(1)
 // FIXME: missing append()
-// CHECK: dref: FAILURE	for 'append' usr=s:FSa6appendFxT_
+// CHECK: dref: FAILURE	for 'append' usr=s:Sa6appendyxF
 // CHECK: type: (@lvalue Array<Int>) -> (Int) -> ()
 
     var arr2 : [Mystruct1]
@@ -87,11 +87,12 @@ class Myclass2 {
 }
 
 struct MyGenStruct1<T, U: ExpressibleByStringLiteral, V: Sequence> {
-// CHECK: decl: struct MyGenStruct1<T, U : ExpressibleByStringLiteral, V : Sequence>
+// CHECK: decl: struct MyGenStruct1<T, U, V> where U : ExpressibleByStringLiteral, V : Sequence
 // FIXME: why are these references to the base type?
-// CHECK: decl: struct MyGenStruct1<{{.*}}> for 'T' usr=s:tV14swift_ide_test12MyGenStruct11TMx
-// CHECK: decl: struct MyGenStruct1<{{.*}}> for 'U' usr=s:tV14swift_ide_test12MyGenStruct11UMq_
-// CHECK: decl: struct MyGenStruct1<{{.*}}> for 'V' usr=s:tV14swift_ide_test12MyGenStruct11VMq0_
+// FIXME: TypeReconstruction should support Node::Kind::GenericTypeParamDecl ('fp')
+// CHECK: decl: FAILURE for 'T' usr=s:14swift_ide_test12MyGenStruct1V1Txmfp
+// CHECK: decl: FAILURE for 'U' usr=s:14swift_ide_test12MyGenStruct1V1Uq_mfp
+// CHECK: decl: FAILURE for 'V' usr=s:14swift_ide_test12MyGenStruct1V1Vq0_mfp
 
   let x: T
 // CHECK: decl: let x: T
@@ -129,3 +130,9 @@ func test001() {
   _ = genstruct2.z
 // CHECK: type: Dictionary<Int, Int>
 }
+
+protocol P1 {}
+func foo1(p : P1) {}
+// CHECK: decl: protocol P1  for 'P1' usr=s:14swift_ide_test2P1P
+// CHECK: decl: func foo1(p: P1)  for 'foo1' usr=s:14swift_ide_test4foo1yAA2P1_p1p_tF
+// CHECK: decl: let p: P1 for 'p' usr=s:14swift_ide_test4foo1yAA2P1_p1p_tFADL_AaC_pv

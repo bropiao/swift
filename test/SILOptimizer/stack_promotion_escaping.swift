@@ -1,4 +1,7 @@
-// RUN: %target-swift-frontend -parse-as-library -O -module-name=test %s -emit-sil | %FileCheck %s
+// RUN: %target-swift-frontend -Xllvm -new-mangling-for-tests -parse-as-library -O -module-name=test %s -emit-sil | %FileCheck %s
+
+// FIXME: https://bugs.swift.org/browse/SR-2808
+// XFAIL: resilient_stdlib
 
 final class Item {}
 
@@ -10,9 +13,9 @@ final public class Escaper {
     myItem = items[0]
   }
 
-// CHECK-LABEL: sil [noinline] @_TFC4test7Escaper15badStuffHappensfT_T_ : $@convention(method) (@guaranteed Escaper) -> () {
+// CHECK-LABEL: sil [noinline] @_T04test7EscaperC15badStuffHappensyyF : $@convention(method) (@guaranteed Escaper) -> () {
 // CHECK: %2 = alloc_ref $Item
-// CHECK: function_ref @swift_bufferAllocateOnStack
+// CHECK: alloc_ref [stack] [tail_elems $Item * %{{[0-9]+}} : $Builtin.Word] $_ContiguousArrayStorage<Item>
 // CHECK: return
   @inline(never)
   public func badStuffHappens() {

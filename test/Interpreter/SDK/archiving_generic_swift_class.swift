@@ -55,7 +55,7 @@ func driver() {
 
   do {
     // Set up the archiver's stdout to feed into our pipe.
-    var archiverActions: posix_spawn_file_actions_t? = nil
+    var archiverActions: posix_spawn_file_actions_t?
     guard posix_spawn_file_actions_init(&archiverActions) == 0 else {
       fatalError("posix_spawn_file_actions_init failed")
     }
@@ -85,7 +85,7 @@ func driver() {
 
   do {
     // Set up the unarchiver's stdin to read from our pipe.
-    var unarchiverActions: posix_spawn_file_actions_t? = nil
+    var unarchiverActions: posix_spawn_file_actions_t?
     guard posix_spawn_file_actions_init(&unarchiverActions) == 0 else {
       fatalError("posix_spawn_file_actions_init failed")
     }
@@ -190,10 +190,10 @@ func unarchive() {
     fatalError("unable to unarchive Foo<NSNumber>")
   }
 
-  // CHECK-LABEL: <_TtGC4main3FooCSo8NSString_: {{0x[0-9a-f]+}}> #0
+  // CHECK-LABEL: <_T04main3FooCySo8NSStringCGD: {{0x[0-9a-f]+}}> #0
   // CHECK:         one: one
   // CHECK:         two: two
-  // CHECK-LABEL: <_TtGC4main3FooCSo8NSNumber_: {{0x[0-9a-f]+}}> #0
+  // CHECK-LABEL: <_T04main3FooCySo8NSNumberCGD: {{0x[0-9a-f]+}}> #0
   // CHECK:         one: 1
   // CHECK:         two: 2
   dump(strings)

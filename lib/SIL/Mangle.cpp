@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -21,6 +21,7 @@
 #include "swift/AST/Mangle.h"
 #include "swift/AST/Module.h"
 #include "swift/AST/ProtocolConformance.h"
+#include "swift/AST/SubstitutionMap.h"
 #include "swift/Basic/Punycode.h"
 #include "swift/SIL/SILArgument.h"
 #include "swift/SIL/SILType.h"
@@ -44,33 +45,40 @@ using namespace Mangle;
 //                           Generic Specialization
 //===----------------------------------------------------------------------===//
 
-static void mangleSubstitution(Mangler &M, Substitution Sub) {
-  M.mangleType(Sub.getReplacement()->getCanonicalType(), 0);
-  for (auto C : Sub.getConformances()) {
-    if (C.isAbstract())
-      return;
-    M.mangleProtocolConformance(C.getConcrete());
+void GenericSpecializationMangler::mangleSpecialization() {
+  Mangler &M = getMangler();
+  // This is a full specialization.
+  SILFunctionType *FTy = Function->getLoweredFunctionType();
+  CanGenericSignature Sig = FTy->getGenericSignature();
+  auto SubMap = Sig->getSubstitutionMap(Subs);
+  for (Type DepType : Sig->getSubstitutableParams()) {
+    M.mangleType(DepType.subst(SubMap)->getCanonicalType(), 0);
+    for (auto C : SubMap.getConformances(DepType->getCanonicalType())) {
+      if (C.isAbstract())
+        return;
+      M.mangleProtocolConformance(C.getConcrete());
+    }
+    M.append('_');
   }
 }
 
-void GenericSpecializationMangler::mangleSpecialization() {
+void PartialSpecializationMangler::mangleSpecialization() {
   Mangler &M = getMangler();
+  // If the only change to the generic signature during specialization is
+  // addition of new same-type requirements, which happens in case of a
+  // full specialization, it would be enough to mangle only the substitutions.
+  //
+  // If the types of function arguments have not changed, but some new
+  // conformances were added to the generic parameters, e.g. in case of
+  // a pre-specialization, then it would be enough to mangle only the new
+  // generic signature.
+  //
+  // If the types of function arguments have changed as a result of a partial
+  // specialization, we need to mangle the entire new function type.
 
-  SILFunctionType *FTy = Function->getLoweredFunctionType();
-  CanGenericSignature Sig = FTy->getGenericSignature();
-
-  unsigned idx = 0;
-  for (Type DepType : Sig->getAllDependentTypes()) {
-    // It is sufficient to only mangle the substitutions of the "primary"
-    // dependent types. As all other dependent types are just derived from the
-    // primary types, this will give us unique symbol names.
-    if (DepType->is<GenericTypeParamType>()) {
-      mangleSubstitution(M, Subs[idx]);
-      M.append('_');
-    }
-    ++idx;
-  }
-  assert(idx == Subs.size() && "subs not parallel to dependent types");
+  // This is a partial specialization.
+  M.mangleType(SpecializedFnTy, 0);
+  M.append("_");
 }
 
 //===----------------------------------------------------------------------===//
@@ -81,8 +89,8 @@ FunctionSignatureSpecializationMangler::
 FunctionSignatureSpecializationMangler(SpecializationPass P, Mangler &M,
                                        IsFragile_t Fragile, SILFunction *F)
   : SpecializationMangler(SpecializationKind::FunctionSignature, P, M, Fragile, F) {
-  for (unsigned i = 0, e = F->getLoweredFunctionType()->getNumSILArguments();
-       i != e; ++i) {
+  for (unsigned i = 0, e = F->getConventions().getNumSILArguments(); i != e;
+       ++i) {
     (void)i;
     Args.push_back({ArgumentModifierIntBase(ArgumentModifier::Unmodified), nullptr});
   }

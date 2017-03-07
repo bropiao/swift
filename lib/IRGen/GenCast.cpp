@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -28,7 +28,6 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Module.h"
 
-#include "swift/Basic/Fallthrough.h"
 #include "swift/SIL/SILInstruction.h"
 #include "swift/SIL/SILModule.h"
 #include "swift/SIL/TypeLowering.h"
@@ -146,12 +145,18 @@ llvm::Value *irgen::emitClassDowncast(IRGenFunction &IGF, llvm::Value *from,
   llvm::Constant *castFn;
 
   // Get the best known type information about the destination type.
-  auto destClass = toType.getSwiftRValueType().getClassBound();
-  assert(destClass || toType.is<ArchetypeType>());
+  ClassDecl *destClass = nullptr;
+  if (auto archetypeTy = toType.getAs<ArchetypeType>()) {
+    if (auto superclassTy = archetypeTy->getSuperclass())
+      destClass = superclassTy->getClassOrBoundGenericClass();
+  } else {
+    destClass = toType.getClassOrBoundGenericClass();
+    assert(destClass != nullptr);
+  }
 
   // If the destination type is known to have a Swift-compatible
   // implementation, use the most specific entrypoint.
-  if (destClass && hasKnownSwiftImplementation(IGF.IGM, destClass)) {
+  if (destClass && destClass->hasKnownSwiftImplementation()) {
     metadataRef = IGF.emitTypeMetadataRef(toType.getSwiftRValueType());
 
     switch (mode) {
@@ -733,16 +738,14 @@ void irgen::emitScalarCheckedCast(IRGenFunction &IGF,
   assert(sourceType.isObject());
   assert(targetType.isObject());
 
-  OptionalTypeKind optKind;
-  if (auto sourceOptObjectType =
-        sourceType.getAnyOptionalObjectType(IGF.getSILModule(), optKind)) {
+  if (auto sourceOptObjectType = sourceType.getAnyOptionalObjectType()) {
 
     // Translate the value from an enum representation to a possibly-null
     // representation.  Note that we assume that this projection is safe
     // for the particular case of an optional class-reference or metatype
     // value.
     Explosion optValue;
-    auto someDecl = IGF.IGM.Context.getOptionalSomeDecl(optKind);
+    auto someDecl = IGF.IGM.Context.getOptionalSomeDecl();
     emitProjectLoadableEnum(IGF, sourceType, value, someDecl, optValue);
 
     assert(value.empty());
@@ -761,7 +764,7 @@ void irgen::emitScalarCheckedCast(IRGenFunction &IGF,
     // value, which we don't need.
     // TODO: In existential-to-existential casts, we should carry over common
     // witness tables from the source to the destination.
-    value.claimAll();
+    (void)value.claimAll();
 
     SmallVector<ProtocolDecl*, 1> protocols;
 

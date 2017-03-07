@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk) -disable-objc-attr-requires-foundation-module -parse %s -verify
+// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk) -disable-objc-attr-requires-foundation-module -typecheck %s -verify
 import ObjectiveC
 
 // REQUIRES: objc_interop
@@ -14,6 +14,9 @@ class C1 {
 
   @objc class func method3(_ a: A, b: B) { } // expected-note{{found this candidate}}
   @objc class func method3(a: A, b: B) { } // expected-note{{found this candidate}}
+
+  @objc(ambiguous1:b:) class func ambiguous(a: A, b: A) { } // expected-note{{found this candidate}}
+  @objc(ambiguous2:b:) class func ambiguous(a: A, b: B) { } // expected-note{{found this candidate}}
 
   @objc func getC1() -> AnyObject { return self }
 
@@ -80,10 +83,14 @@ func testSelector(_ c1: C1, p1: P1, obj: AnyObject) {
   let sel2: Selector
   sel2 = sel1
   _ = sel2
+
+  let dict: [Selector: Int] = [:]
+  let _: Int? = dict[#selector(c1.method1)]
 }
 
 func testAmbiguity() {
-  _ = #selector(C1.method3) // expected-error{{ambiguous use of 'method3(_:b:)'}}
+  _ = #selector(C1.method3) // expected-error{{ambiguous use of 'method3'}}
+  _ = #selector(C1.ambiguous) // expected-error{{ambiguous use of 'ambiguous(a:b:)'}}
 }
 
 func testUnusedSelector() {

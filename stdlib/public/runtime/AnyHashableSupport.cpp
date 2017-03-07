@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -59,23 +59,28 @@ struct HashableConformanceEntry {
                          const Metadata *baseTypeThatConformsToHashable) {
     return 0;
   }
+
+  size_t getExtraAllocationSize() const {
+    return 0;
+  }
 };
-} // end unnamed namesapce
+} // end unnamed namespace
 
 // FIXME(performance): consider merging this cache into the regular
 // protocol conformance cache.
-static Lazy<ConcurrentMap<HashableConformanceEntry>> HashableConformances;
+static ConcurrentMap<HashableConformanceEntry, /*Destructor*/ false>
+HashableConformances;
 
 template<bool KnownToConformToHashable>
 LLVM_ATTRIBUTE_ALWAYS_INLINE
 static const Metadata *findHashableBaseTypeImpl(const Metadata *type) {
   // Check the cache first.
   if (HashableConformanceEntry *entry =
-          HashableConformances->find(HashableConformanceKey{type})) {
+          HashableConformances.find(HashableConformanceKey{type})) {
     return entry->baseTypeThatConformsToHashable;
   }
   if (!KnownToConformToHashable &&
-      !swift_conformsToProtocol(type, &_TMps8Hashable)) {
+      !swift_conformsToProtocol(type, &HashableProtocolDescriptor)) {
     // Don't cache the negative response because we don't invalidate
     // this cache when a new conformance is loaded dynamically.
     return nullptr;
@@ -88,12 +93,12 @@ static const Metadata *findHashableBaseTypeImpl(const Metadata *type) {
         _swift_class_getSuperclass(baseTypeThatConformsToHashable);
     if (!superclass)
       break;
-    if (!swift_conformsToProtocol(superclass, &_TMps8Hashable))
+    if (!swift_conformsToProtocol(superclass, &HashableProtocolDescriptor))
       break;
     baseTypeThatConformsToHashable = superclass;
   }
-  HashableConformances->getOrInsert(HashableConformanceKey{type},
-                                    baseTypeThatConformsToHashable);
+  HashableConformances.getOrInsert(HashableConformanceKey{type},
+                                   baseTypeThatConformsToHashable);
   return baseTypeThatConformsToHashable;
 }
 
@@ -118,7 +123,7 @@ const Metadata *swift::hashable_support::findHashableBaseType(
 }
 
 SWIFT_CC(swift) SWIFT_RUNTIME_STDLIB_INTERFACE
-extern "C" void _swift_stdlib_makeAnyHashableUsingDefaultRepresentation(
+void _swift_stdlib_makeAnyHashableUsingDefaultRepresentation(
   const OpaqueValue *value,
   const void *anyHashableResultPointer,
   const Metadata *T,
@@ -126,7 +131,7 @@ extern "C" void _swift_stdlib_makeAnyHashableUsingDefaultRepresentation(
 );
 
 SWIFT_CC(swift) SWIFT_RUNTIME_STDLIB_INTERFACE
-extern "C" void _swift_stdlib_makeAnyHashableUpcastingToHashableBaseType(
+void _swift_stdlib_makeAnyHashableUpcastingToHashableBaseType(
   OpaqueValue *value,
   const void *anyHashableResultPointer,
   const Metadata *type,
@@ -148,7 +153,7 @@ extern "C" void _swift_stdlib_makeAnyHashableUpcastingToHashableBaseType(
           getValueFromSwiftValue(srcSwiftValue);
 
       if (auto unboxedHashableWT =
-              swift_conformsToProtocol(type, &_TMps8Hashable)) {
+              swift_conformsToProtocol(type, &HashableProtocolDescriptor)) {
         ValueBuffer unboxedCopyBuf;
         auto unboxedValueCopy = unboxedType->vw_initializeBufferWithCopy(
             &unboxedCopyBuf, const_cast<OpaqueValue *>(unboxedValue));

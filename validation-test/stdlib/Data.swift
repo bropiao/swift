@@ -29,4 +29,39 @@ DataTestSuite.test("Data.Iterator semantics") {
   }
   checkSequence((0..<65535).lazy.map({ UInt8($0 % 23) }), data)
 }
+
+DataTestSuite.test("associated types") {
+  typealias Subject = Data
+  expectRandomAccessCollectionAssociatedTypes(
+    collectionType: Subject.self,
+    iteratorType: Data.Iterator.self,
+    subSequenceType: Subject.self,
+    indexType: Int.self,
+    indexDistanceType: Int.self,
+    indicesType: CountableRange<Int>.self)
+}
+
+DataTestSuite.test("Data SubSequence") {
+  let array: [UInt8] = [0, 1, 2, 3, 4, 5, 6, 7]
+  var data = Data(bytes: array)
+
+  checkRandomAccessCollection(array, data)
+
+  for i in 0..<data.count {
+    for j in i..<data.count {
+      var dataSlice = data[i..<j]
+      let arraySlice = array[i..<j]
+      if dataSlice.count > 0 {
+        expectEqual(dataSlice.startIndex, i)
+        expectEqual(dataSlice.endIndex, j)
+        
+        dataSlice[i] = 0xFF
+        
+        expectEqual(dataSlice.startIndex, i)
+        expectEqual(dataSlice.endIndex, j)
+      }
+    }
+  }
+}
+
 runAllTests()

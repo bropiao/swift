@@ -2,15 +2,15 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
-/// Creates a sequence of pairs built out of two underyling sequences.
+/// Creates a sequence of pairs built out of two underlying sequences.
 ///
 /// In the `Zip2Sequence` instance returned by this function, the elements of
 /// the *i*th pair are the *i*th elements of each underlying sequence. The
@@ -112,12 +112,15 @@ public struct Zip2Iterator<
 public struct Zip2Sequence<Sequence1 : Sequence, Sequence2 : Sequence>
   : Sequence {
 
+    
+  @available(*, deprecated, renamed: "Sequence1.Iterator")
   public typealias Stream1 = Sequence1.Iterator
+  @available(*, deprecated, renamed: "Sequence2.Iterator")
   public typealias Stream2 = Sequence2.Iterator
 
   /// A type whose instances can produce the elements of this
   /// sequence, in order.
-  public typealias Iterator = Zip2Iterator<Stream1, Stream2>
+  public typealias Iterator = Zip2Iterator<Sequence1.Iterator, Sequence2.Iterator>
 
   @available(*, unavailable, renamed: "Iterator")
   public typealias Generator = Iterator

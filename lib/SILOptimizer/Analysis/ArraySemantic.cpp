@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -90,8 +90,7 @@ bool swift::ArraySemanticsCall::isValidSignature() {
         return false;
 
       StringRef AllocFuncName = AllocFn->getName();
-      if (AllocFuncName != "swift_bufferAllocate" &&
-          AllocFuncName != "swift_bufferAllocateOnStack")
+      if (AllocFuncName != "swift_bufferAllocate")
         return false;
 
       if (!hasOneNonDebugUse(AllocBufferAI))
@@ -100,8 +99,9 @@ bool swift::ArraySemanticsCall::isValidSignature() {
     return true;
   }
   case ArrayCallKind::kWithUnsafeMutableBufferPointer: {
-    if (SemanticsCall->getOrigCalleeType()->getNumIndirectResults() != 1 ||
-        SemanticsCall->getNumArguments() != 3)
+    SILFunctionConventions origConv(SemanticsCall->getOrigCalleeType(), Mod);
+    if (origConv.getNumIndirectSILResults() != 1
+        || SemanticsCall->getNumArguments() != 3)
       return false;
     auto SelfConvention = FnTy->getSelfParameter().getConvention();
     return SelfConvention == ParameterConvention::Indirect_Inout;
@@ -199,7 +199,7 @@ bool swift::ArraySemanticsCall::hasGetElementDirectResult() const {
   assert(getKind() == ArrayCallKind::kGetElement &&
          "must be an array.get_element call");
   bool DirectResult =
-    (SemanticsCall->getOrigCalleeType()->getNumIndirectResults() == 0);
+      (SemanticsCall->getOrigCalleeConv().getNumIndirectSILResults() == 0);
   assert((DirectResult && SemanticsCall->getNumArguments() == 4 ||
           !DirectResult && SemanticsCall->getNumArguments() == 5) &&
          "wrong number of array.get_element call arguments");
@@ -258,7 +258,7 @@ static bool canHoistArrayArgument(ApplyInst *SemanticsCall, SILValue Arr,
     return false;
 
   ValueBase *SelfVal = Arr;
-  auto *SelfBB = SelfVal->getParentBB();
+  auto *SelfBB = SelfVal->getParentBlock();
   if (DT->dominates(SelfBB, InsertBefore->getParent()))
     return true;
 
@@ -268,7 +268,7 @@ static bool canHoistArrayArgument(ApplyInst *SemanticsCall, SILValue Arr,
     auto Val = LI->getOperand();
     bool DoesNotDominate;
     StructElementAddrInst *SEI;
-    while ((DoesNotDominate = !DT->dominates(Val->getParentBB(),
+    while ((DoesNotDominate = !DT->dominates(Val->getParentBlock(),
                                              InsertBefore->getParent())) &&
            (SEI = dyn_cast<StructElementAddrInst>(Val)))
       Val = SEI->getOperand();
@@ -326,7 +326,7 @@ bool swift::ArraySemanticsCall::canHoist(SILInstruction *InsertBefore,
 static SILValue copyArrayLoad(SILValue ArrayStructValue,
                                SILInstruction *InsertBefore,
                                DominanceInfo *DT) {
-  if (DT->dominates(ArrayStructValue->getParentBB(),
+  if (DT->dominates(ArrayStructValue->getParentBlock(),
                     InsertBefore->getParent()))
     return ArrayStructValue;
 
@@ -335,7 +335,7 @@ static SILValue copyArrayLoad(SILValue ArrayStructValue,
   // Recursively move struct_element_addr.
   ValueBase *Val = LI->getOperand();
   auto *InsertPt = InsertBefore;
-  while (!DT->dominates(Val->getParentBB(), InsertBefore->getParent())) {
+  while (!DT->dominates(Val->getParentBlock(), InsertBefore->getParent())) {
     auto *Inst = cast<StructElementAddrInst>(Val);
     Inst->moveBefore(InsertPt);
     Val = Inst->getOperand();
@@ -374,17 +374,19 @@ static SILValue hoistOrCopySelf(ApplyInst *SemanticsCall,
   bool IsOwnedSelf = SelfConvention == ParameterConvention::Direct_Owned;
 
   // Emit matching release for owned self if we are moving the original call.
-  if (!LeaveOriginal && IsOwnedSelf)
-    SILBuilderWithScope(SemanticsCall)
-        .createReleaseValue(SemanticsCall->getLoc(), Self, Atomicity::Atomic);
+  if (!LeaveOriginal && IsOwnedSelf) {
+    SILBuilderWithScope Builder(SemanticsCall);
+    Builder.createReleaseValue(SemanticsCall->getLoc(), Self, Builder.getDefaultAtomicity());
+  }
 
   auto NewArrayStructValue = copyArrayLoad(Self, InsertBefore, DT);
 
   // Retain the array.
-  if (IsOwnedSelf)
-    SILBuilderWithScope(InsertBefore, SemanticsCall)
-        .createRetainValue(SemanticsCall->getLoc(), NewArrayStructValue,
-                           Atomicity::Atomic);
+  if (IsOwnedSelf) {
+    SILBuilderWithScope Builder(InsertBefore, SemanticsCall);
+    Builder.createRetainValue(SemanticsCall->getLoc(), NewArrayStructValue,
+                              Builder.getDefaultAtomicity());
+  }
 
   return NewArrayStructValue;
 }
@@ -477,10 +479,11 @@ ApplyInst *swift::ArraySemanticsCall::hoistOrCopy(SILInstruction *InsertBefore,
 
 void swift::ArraySemanticsCall::removeCall() {
   if (getSelfParameterConvention(SemanticsCall) ==
-      ParameterConvention::Direct_Owned)
-    SILBuilderWithScope(SemanticsCall)
-        .createReleaseValue(SemanticsCall->getLoc(), getSelf(),
-                            Atomicity::Atomic);
+      ParameterConvention::Direct_Owned) {
+    SILBuilderWithScope Builder(SemanticsCall);
+    Builder.createReleaseValue(SemanticsCall->getLoc(), getSelf(),
+                               Builder.getDefaultAtomicity());
+  }
 
   switch (getKind()) {
   default: break;
@@ -546,11 +549,7 @@ bool swift::ArraySemanticsCall::mayHaveBridgedObjectElementType() const {
   assert(hasSelf() && "Need self parameter");
 
   auto Ty = getSelf()->getType().getSwiftRValueType();
-  auto Canonical = Ty.getCanonicalTypeOrNull();
-  if (Canonical.isNull())
-    return true;
-
-  auto *Struct = Canonical->getStructOrBoundGenericStruct();
+  auto *Struct = Ty->getStructOrBoundGenericStruct();
   assert(Struct && "Array must be a struct !?");
   if (Struct) {
     auto BGT = dyn_cast<BoundGenericType>(Ty);
@@ -559,10 +558,7 @@ bool swift::ArraySemanticsCall::mayHaveBridgedObjectElementType() const {
 
     // Check the array element type parameter.
     bool isClass = true;
-    for (auto TP : BGT->getGenericArgs()) {
-      auto EltTy = TP.getCanonicalTypeOrNull();
-      if (EltTy.isNull())
-        return true;
+    for (auto EltTy : BGT->getGenericArgs()) {
       if (EltTy->isBridgeableObjectType())
         return true;
       isClass = false;
@@ -579,14 +575,17 @@ SILValue swift::ArraySemanticsCall::getInitializationCount() const {
     // argument. The count is the second argument.
     // A call to _allocateUninitialized has the count as first argument.
     SILValue Arg0 = SemanticsCall->getArgument(0);
-    if (Arg0->getType().isExistentialType())
+    if (Arg0->getType().isExistentialType() ||
+        Arg0->getType().hasReferenceSemantics())
       return SemanticsCall->getArgument(1);
     else return SemanticsCall->getArgument(0);
   }
 
   if (getKind() == ArrayCallKind::kArrayInit &&
       SemanticsCall->getNumArguments() == 3)
-    return SemanticsCall->getArgument(0);
+    // Repeated-value array initializer. Arguments are the value to
+    // repeat, the count, and the value's type.
+    return SemanticsCall->getArgument(1);
 
   return SILValue();
 }
@@ -665,7 +664,7 @@ bool swift::ArraySemanticsCall::replaceByValue(SILValue V) {
   SILBuilderWithScope Builder(SemanticsCall);
   auto &ValLowering = Builder.getModule().getTypeLowering(V->getType());
   if (hasGetElementDirectResult()) {
-    ValLowering.emitRetainValue(Builder, SemanticsCall->getLoc(), V);
+    ValLowering.emitCopyValue(Builder, SemanticsCall->getLoc(), V);
     SemanticsCall->replaceAllUsesWith(V);
   } else {
     auto Dest = SemanticsCall->getArgument(0);
@@ -675,7 +674,7 @@ bool swift::ArraySemanticsCall::replaceByValue(SILValue V) {
     if (!ASI)
       return false;
 
-    ValLowering.emitRetainValue(Builder, SemanticsCall->getLoc(), V);
+    ValLowering.emitCopyValue(Builder, SemanticsCall->getLoc(), V);
     ValLowering.emitStoreOfCopy(Builder, SemanticsCall->getLoc(), V, Dest,
                                 IsInitialization_t::IsInitialization);
   }

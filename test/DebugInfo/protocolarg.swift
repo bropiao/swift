@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend %s -emit-ir -g -o - | %FileCheck %s
+// RUN: %target-swift-frontend -Xllvm -new-mangling-for-tests %s -emit-ir -g -o - | %FileCheck %s
 
 func markUsed<T>(_ t: T) {}
 func use<T>(_ t: inout T) {}
@@ -7,10 +7,10 @@ public protocol IGiveOutInts {
   func callMe() -> Int64
 }
 
-// CHECK: define {{.*}}@_TF11protocolarg16printSomeNumbersFPS_12IGiveOutInts_T_
-// CHECK: @llvm.dbg.declare(metadata %P11protocolarg12IGiveOutInts_* %
+// CHECK: define {{.*}}@_T011protocolarg16printSomeNumbersyAA12IGiveOutInts_pF
+// CHECK: @llvm.dbg.declare(metadata %T11protocolarg12IGiveOutIntsP* %
 // CHECK-SAME:              metadata ![[VAR:.*]], metadata ![[EMPTY:.*]])
-// CHECK: @llvm.dbg.declare(metadata %P11protocolarg12IGiveOutInts_** %
+// CHECK: @llvm.dbg.declare(metadata %T11protocolarg12IGiveOutIntsP** %
 // CHECK-SAME:              metadata ![[ARG:.*]], metadata ![[DEREF:.*]])
 
 // CHECK: ![[EMPTY]] = !DIExpression()

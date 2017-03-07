@@ -15,6 +15,11 @@ import tokenize
 
 from bisect import bisect
 
+try:
+    basestring
+except NameError:
+    basestring = str
+
 
 def get_line_starts(s):
     """Return a list containing the start index of each line in s.
@@ -45,6 +50,7 @@ def split_lines(s):
     """
     return [l + '\n' for l in s.split('\n')]
 
+
 # text on a line up to the first '$$', '${', or '%%'
 literalText = r'(?: [^$\n%] | \$(?![${]) | %(?!%) )*'
 
@@ -65,7 +71,8 @@ tokenize_re = re.compile(
     ^
     (?:
       (?P<gybLines>
-        (?P<_indent> [\ \t]* % (?! [{%] ) [\ \t]* ) (?! [\ \t] | ''' + linesClose + r''' ) .*
+        (?P<_indent> [\ \t]* % (?! [{%] ) [\ \t]* ) (?! [\ \t] | ''' +
+    linesClose + r''' ) .*
         ( \n (?P=_indent) (?! ''' + linesClose + r''' ) .* ) *
       )
       | (?P<gybLinesClose> [\ \t]* % [ \t]* ''' + linesClose + r''' )
@@ -375,6 +382,7 @@ def code_starts_with_dedent_keyword(source_lines):
 
 
 class ParseContext(object):
+
     """State carried through a parse of a template"""
 
     filename = ''
@@ -543,6 +551,7 @@ class ParseContext(object):
 
 
 class ExecutionContext(object):
+
     """State we pass around during execution of a template"""
 
     def __init__(self, line_directive='// ###sourceLocation',
@@ -578,6 +587,7 @@ class ExecutionContext(object):
 
 
 class ASTNode(object):
+
     """Abstract base class for template AST nodes"""
 
     def __init__(self):
@@ -600,6 +610,7 @@ class ASTNode(object):
 
 
 class Block(ASTNode):
+
     """A sequence of other AST nodes, to be executed in order"""
 
     children = []
@@ -623,6 +634,7 @@ class Block(ASTNode):
 
 
 class Literal(ASTNode):
+
     """An AST node that generates literal text"""
 
     def __init__(self, context):
@@ -642,6 +654,7 @@ class Literal(ASTNode):
 
 
 class Code(ASTNode):
+
     """An AST node that is evaluated as Python"""
 
     code = None
@@ -709,7 +722,8 @@ class Code(ASTNode):
 
         # If we got a result, the code was an expression, so append
         # its value
-        if result is not None and result != '':
+        if result is not None \
+                or (isinstance(result, basestring) and result != ''):
             from numbers import Number, Integral
             result_string = None
             if isinstance(result, Number) and not isinstance(result, Integral):
@@ -1134,6 +1148,7 @@ def main():
     sys.path = [os.path.split(args.file.name)[0] or '.'] + sys.path
 
     args.target.write(execute_template(ast, args.line_directive, **bindings))
+
 
 if __name__ == '__main__':
     main()

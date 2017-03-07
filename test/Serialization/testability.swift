@@ -1,4 +1,4 @@
-// RUN: rm -rf %t && mkdir %t
+// RUN: rm -rf %t && mkdir -p %t
 
 // This test has two purposes. This first block just tests that we serialize
 // the -enable-testing flag correctly...
@@ -49,7 +49,7 @@
   #endif
 
   #if TESTABLE || DEBUG
-    let x: Sub? = nil
+    let x: Sub?
   #endif
 
   unrelated()

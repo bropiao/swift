@@ -1,4 +1,4 @@
-// RUN: rm -rf %t  &&  mkdir %t
+// RUN: rm -rf %t  &&  mkdir -p %t
 // RUN: %target-build-swift %s -o %t/a.out
 // RUN: %target-run %t/a.out | %FileCheck %s
 // REQUIRES: executable_test
@@ -467,13 +467,13 @@ print((NoPayload.x as NoPayload?) == NoPayload.y)
 class Foo {}
 
 struct Oof {
-  weak var foo: Foo? = nil
+  weak var foo: Foo?
 }
 
 protocol Boo {}
 
 struct Goof {
-  var boo: Boo? = nil
+  var boo: Boo?
 }
 
 let oofs = [Oof()]

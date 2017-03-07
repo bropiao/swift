@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend -emit-sil -O %s | %FileCheck %s
+// RUN: %target-swift-frontend -Xllvm -new-mangling-for-tests -emit-sil -O %s | %FileCheck %s
 
 // We used to crash on this when trying to devirtualize t.boo(a, 1),
 // because it is an "apply" with unbound generic arguments and
@@ -44,11 +44,12 @@ class Derived<T> : Base<T> {
 
 // Check that the instance method Derived<T>.foo can be devirtualized, because Derived.foo is an internal function,
 // Derived has no subclasses and it is a WMO compilation.
-// CHECK: sil hidden [noinline] @_TF22devirt_unbound_generic5test2urFGCS_7Derivedx_T_
+// CHECK: sil hidden [noinline] @_T022devirt_unbound_generic5test2yAA7DerivedCyxGlF
 // CHECK-NOT: class_method
-// CHECK: function_ref @_TFC22devirt_unbound_generic7Derived3foofT_T_
-// CHECK-NOT: class_method
+// CHECK-NOT: witness_method
+// CHECK-NOT: apply
 // CHECK: return
+// CHEC: end sil function '_T022devirt_unbound_generic5test2yAA7DerivedCyxGlF'
 @inline(never)
 func test2<T>(_ d: Derived<T>) {
    d.foo()
@@ -60,11 +61,12 @@ public func doTest2<T>(_ t:T) {
 
 // Check that the class method Derived<T>.boo can be devirtualized, because Derived.boo is an internal function,
 // Derived has no subclasses and it is a WMO compilation.
-// CHECK: sil hidden [noinline] @_TF22devirt_unbound_generic5test3urFGCS_7Derivedx_T_
+// CHECK: sil hidden [noinline] @_T022devirt_unbound_generic5test3yAA7DerivedCyxGlF
 // CHECK-NOT: class_method
-// CHECK: function_ref @_TZFC22devirt_unbound_generic7Derived3boofT_T_
-// CHECK-NOT: class_method
+// CHECK-NOT: witness_method
+// CHECK-NOT: apply
 // CHECK: return
+// CHECK: end sil function '_T022devirt_unbound_generic5test3yAA7DerivedCyxGlF'
 @inline(never)
 func test3<T>(_ d: Derived<T>) {
    type(of: d).boo()

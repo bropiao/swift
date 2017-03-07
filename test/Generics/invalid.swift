@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift -enable-experimental-nested-generic-types
+// RUN: %target-typecheck-verify-swift
 
 func bet() where A : B {} // expected-error {{'where' clause cannot be attached to a non-generic declaration}}
 
@@ -9,7 +9,7 @@ class dalet where A : B {} // expected-error {{'where' clause cannot be attached
 
 protocol he where A : B { // expected-error {{'where' clause cannot be attached to a protocol declaration}}
 
-  associatedtype vav where A : B // expected-error {{'where' clause cannot be attached to an associated type declaration}}
+  associatedtype vav where A : B // expected-error {{where clauses on associated types are fragile; use '-swift-version 4' to experiment.}}
 }
 
 
@@ -78,4 +78,14 @@ func takesAny(_ a: Any) {}
 
 func badDiagnostic3() {
   takesAny(Deli.self) // expected-error {{argument type 'Deli<_>.Type' does not conform to expected type 'Any'}}
+}
+
+// Crash with missing nested type inside concrete type
+class OuterGeneric<T> {
+  class InnerGeneric<U> where U:OuterGeneric<T.NoSuchType> {
+  // expected-error@-1 {{'NoSuchType' is not a member type of 'T'}}
+    func method() {
+      _ = method
+    }
+  }
 }

@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -35,6 +35,7 @@
 #include "swift/IDE/SyntaxModel.h"
 #include "swift/Subsystems.h"
 
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Mutex.h"
 
@@ -371,8 +372,8 @@ struct SwiftSemanticToken {
   // The code-completion kinds are a good match for the semantic kinds we want.
   // FIXME: Maybe rename CodeCompletionDeclKind to a more general concept ?
   CodeCompletionDeclKind Kind : 6;
-  bool IsRef : 1;
-  bool IsSystem : 1;
+  unsigned IsRef : 1;
+  unsigned IsSystem : 1;
 
   SwiftSemanticToken(CodeCompletionDeclKind Kind,
                      unsigned ByteOffset, unsigned Length,
@@ -380,8 +381,12 @@ struct SwiftSemanticToken {
     : ByteOffset(ByteOffset), Length(Length), Kind(Kind),
       IsRef(IsRef), IsSystem(IsSystem) { }
 
+  bool getIsRef() const { return static_cast<bool>(IsRef); }
+
+  bool getIsSystem() const { return static_cast<bool>(IsSystem); }
+
   UIdent getUIdentForKind() const {
-    return SwiftLangSupport::getUIDForCodeCompletionDeclKind(Kind, IsRef);
+    return SwiftLangSupport::getUIDForCodeCompletionDeclKind(Kind, getIsRef());
   }
 };
 static_assert(sizeof(SwiftSemanticToken) == 8, "Too big");
@@ -522,7 +527,7 @@ public:
   }
 };
 
-} // anonymous namespace.
+} // anonymous namespace
 
 uint64_t SwiftDocumentSemanticInfo::getASTGeneration() const {
   llvm::sys::ScopedLock L(Mtx);
@@ -771,7 +776,8 @@ public:
     : SM(SM), BufferID(BufferID) {}
 
   bool visitDeclReference(ValueDecl *D, CharSourceRange Range,
-                          TypeDecl *CtorTyRef, Type T) override {
+                          TypeDecl *CtorTyRef, ExtensionDecl *ExtTyRef, Type T,
+                          SemaReferenceKind Kind) override {
     if (isa<VarDecl>(D) && D->hasName() && D->getName().str() == "self")
       return true;
 
@@ -788,7 +794,8 @@ public:
   bool visitSubscriptReference(ValueDecl *D, CharSourceRange Range,
                                bool IsOpenBracket) override {
     // We should treat both open and close brackets equally
-    return visitDeclReference(D, Range, nullptr, Type());
+    return visitDeclReference(D, Range, nullptr, nullptr, Type(),
+                              SemaReferenceKind::SubscriptRef);
   }
 
   void annotate(const Decl *D, bool IsRef, CharSourceRange Range) {
@@ -974,6 +981,8 @@ static UIdent getAccessibilityUID(Accessibility Access) {
   case Accessibility::Open:
     return AccessOpen;
   }
+
+  llvm_unreachable("Unhandled Accessibility in switch.");
 }
 
 static Accessibility inferDefaultAccessibility(const ExtensionDecl *ED) {
@@ -1021,6 +1030,8 @@ static Accessibility inferAccessibility(const ValueDecl *D) {
   case DeclContextKind::ExtensionDecl:
     return inferDefaultAccessibility(cast<ExtensionDecl>(DC));
   }
+
+  llvm_unreachable("Unhandled DeclContextKind in switch.");
 }
 
 static Optional<Accessibility>
@@ -1408,14 +1419,14 @@ private:
       if (auto *FTR = dyn_cast<FunctionTypeRepr>(T)) {
         FoundFunctionTypeRepr = true;
         if (auto *TTR = dyn_cast_or_null<TupleTypeRepr>(FTR->getArgsTypeRepr())) {
-          for (auto *ArgTR : TTR->getElements()) {
+          for (unsigned i = 0, end = TTR->getNumElements(); i != end; ++i) {
+            auto *ArgTR = TTR->getElement(i);
             CharSourceRange NR;
             CharSourceRange TR;
-            auto *NTR = dyn_cast<NamedTypeRepr>(ArgTR);
-            if (NTR && NTR->hasName()) {
-              NR = CharSourceRange(NTR->getNameLoc(),
-                                   NTR->getName().getLength());
-              ArgTR = NTR->getTypeRepr();
+            auto name = TTR->getElementName(i);
+            if (!name.empty()) {
+              NR = CharSourceRange(TTR->getElementNameLoc(i),
+                                   name.getLength());
             }
             SourceLoc SRE = Lexer::getLocForEndOfToken(SM,
                                                        ArgTR->getEndLoc());
@@ -1447,7 +1458,7 @@ private:
   bool containClosure(Expr *E) {
     if (E->getStartLoc().isInvalid())
       return false;
-    EditorPlaceholderExpr *Found;
+    EditorPlaceholderExpr *Found = nullptr;
     ClosureInfo Info;
     ClosureTypeWalker ClosureWalker(SM, Info);
     PlaceholderFinder Finder(E->getStartLoc(), Found);
@@ -1778,7 +1789,7 @@ void SwiftEditorDocument::readSemanticInfo(ImmutableTextSnapshotRef Snapshot,
     unsigned Offset = SemaTok.ByteOffset;
     unsigned Length = SemaTok.Length;
     UIdent Kind = SemaTok.getUIdentForKind();
-    bool IsSystem = SemaTok.IsSystem;
+    bool IsSystem = SemaTok.getIsSystem();
     if (Kind.isValid())
       if (!Consumer.handleSemanticAnnotation(Offset, Length, Kind, IsSystem))
         break;

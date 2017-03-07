@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 //===----------------------------------------------------------------------===//
 // Tests for various simple enum constructs
@@ -219,8 +219,9 @@ func f() {
 }
 
 func union_error(_ a: ZeroOneTwoThree) {
-  var _ : ZeroOneTwoThree = .Zero(1) // expected-error {{contextual member 'Zero' has no associated value}}
-  var _ : ZeroOneTwoThree = .One // expected-error {{contextual member 'One' expects argument of type 'Int'}}
+  var _ : ZeroOneTwoThree = .Zero(1) // expected-error {{member 'Zero' takes no arguments}}
+  var _ : ZeroOneTwoThree = .Zero() // expected-error {{member 'Zero' is not a function}} {{34-36=}}
+  var _ : ZeroOneTwoThree = .One // expected-error {{member 'One' expects argument of type 'Int'}}
   var _ : ZeroOneTwoThree = .foo // expected-error {{type 'ZeroOneTwoThree' has no member 'foo'}}
   var _ : ZeroOneTwoThree = .foo() // expected-error {{type 'ZeroOneTwoThree' has no member 'foo'}}
 }
@@ -310,3 +311,9 @@ enum SyntheticMember { // expected-note {{did you mean the implicitly-synthesize
   case Foo
 }
 print(SyntheticMember.Foo.hasValue) // expected-error {{value of type 'SyntheticMember' has no member 'hasValue'}}
+
+// Non-materializable argument type
+enum Lens<T> {
+  case foo(inout T) // expected-error {{'inout' may only be used on parameters}}
+  case bar(inout T, Int) // expected-error {{'inout' may only be used on parameters}}
+}

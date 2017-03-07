@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -18,6 +18,8 @@
 #ifndef SWIFT_SIL_TYPESUBSTCLONER_H
 #define SWIFT_SIL_TYPESUBSTCLONER_H
 
+#include "swift/AST/GenericEnvironment.h"
+#include "swift/AST/ProtocolConformance.h"
 #include "swift/AST/Type.h"
 #include "swift/SIL/SILCloner.h"
 #include "swift/SIL/DynamicCasts.h"
@@ -38,6 +40,12 @@ class TypeSubstCloner : public SILClonerWithScopes<ImplClass> {
     llvm_unreachable("Clients need to explicitly call a base class impl!");
   }
 
+  void computeSubsMap() {
+    if (auto *env = Original.getGenericEnvironment()) {
+      SubsMap = env->getSubstitutionMap(ApplySubs);
+    }
+  }
+
 public:
   using SILClonerWithScopes<ImplClass>::asImpl;
   using SILClonerWithScopes<ImplClass>::getBuilder;
@@ -55,49 +63,46 @@ public:
 
   TypeSubstCloner(SILFunction &To,
                   SILFunction &From,
-                  TypeSubstitutionMap &ContextSubs,
-                  ArrayRef<Substitution> ApplySubs,
+                  SubstitutionList ApplySubs,
                   SILOpenedArchetypesTracker &OpenedArchetypesTracker,
                   bool Inlining = false)
     : SILClonerWithScopes<ImplClass>(To, OpenedArchetypesTracker, Inlining),
       SwiftMod(From.getModule().getSwiftModule()),
-      SubsMap(ContextSubs),
       Original(From),
       ApplySubs(ApplySubs),
-      Inlining(Inlining) { }
+      Inlining(Inlining) {
+    computeSubsMap();
+  }
 
   TypeSubstCloner(SILFunction &To,
                   SILFunction &From,
-                  TypeSubstitutionMap &ContextSubs,
-                  ArrayRef<Substitution> ApplySubs,
+                  SubstitutionList ApplySubs,
                   bool Inlining = false)
     : SILClonerWithScopes<ImplClass>(To, Inlining),
       SwiftMod(From.getModule().getSwiftModule()),
-      SubsMap(ContextSubs),
       Original(From),
       ApplySubs(ApplySubs),
-      Inlining(Inlining) { }
+      Inlining(Inlining) {
+    computeSubsMap();
+  }
 
 
 protected:
   SILType remapType(SILType Ty) {
-    return SILType::substType(Original.getModule(), SwiftMod, SubsMap, Ty);
+    return Ty.subst(Original.getModule(), SubsMap);
   }
 
   CanType remapASTType(CanType ty) {
-    return ty.subst(SwiftMod, SubsMap, None)->getCanonicalType();
+    return ty.subst(SubsMap, None)->getCanonicalType();
   }
 
   Substitution remapSubstitution(Substitution sub) {
-    if (!ApplySubs.empty()) {
-      auto sig = Original.getLoweredFunctionType()->getGenericSignature();
-      auto *env = Original.getGenericEnvironment();
-      sub = sub.subst(SwiftMod, sig, env, ApplySubs);
-    }
     // Remap opened archetypes into the cloned context.
-    return Substitution(getASTTypeInClonedContext(sub.getReplacement()
-                                                    ->getCanonicalType()),
-                        sub.getConformances());
+    sub = Substitution(
+        getASTTypeInClonedContext(sub.getReplacement()->getCanonicalType()),
+        sub.getConformances());
+    // Now remap the substitution. 
+    return sub.subst(SwiftMod, SubsMap);
   }
 
   ProtocolConformanceRef remapConformance(CanType type,
@@ -186,7 +191,7 @@ protected:
                                         &Builder.getFunction());
         Builder.createPartialApply(getOpLocation(Inst->getLoc()), FRI,
                                    getOpType(Inst->getSubstCalleeSILType()),
-                                   ArrayRef<Substitution>(),
+                                   SubstitutionList(),
                                    Args,
                                    getOpType(Inst->getType()));
         return;
@@ -207,12 +212,7 @@ protected:
   void visitWitnessMethodInst(WitnessMethodInst *Inst) {
     // Specialize the Self substitution of the witness_method.
     auto sub = Inst->getSelfSubstitution();
-    if (!ApplySubs.empty()) {
-      auto sig = Original.getLoweredFunctionType()->getGenericSignature();
-      auto *env = Original.getGenericEnvironment();
-      sub = sub.subst(Inst->getModule().getSwiftModule(),
-                      sig, env, ApplySubs);
-    }
+    sub = sub.subst(Inst->getModule().getSwiftModule(), SubsMap);
 
     assert(sub.getConformances().size() == 1 &&
            "didn't get conformance from substitution?!");
@@ -286,13 +286,13 @@ protected:
   }
 
   /// The Swift module that the cloned function belongs to.
-  Module *SwiftMod;
+  ModuleDecl *SwiftMod;
   /// The substitutions list for the specialization.
-  TypeSubstitutionMap &SubsMap;
+  SubstitutionMap SubsMap;
   /// The original function to specialize.
   SILFunction &Original;
   /// The substitutions used at the call site.
-  ArrayRef<Substitution> ApplySubs;
+  SubstitutionList ApplySubs;
   /// True, if used for inlining.
   bool Inlining;
 };

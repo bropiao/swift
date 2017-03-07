@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -47,14 +47,6 @@ IRGenFunction::IRGenFunction(IRGenModule &IGM, llvm::Function *Fn,
     IGM.DebugInfo->pushLoc();
   }
 
-  // Apply sanitizer attributes to the function.
-  // TODO: Check if the function is ASan black listed either in the external
-  // file or via annotations.
-  if (IGM.IRGen.Opts.Sanitize == SanitizerKind::Address)
-    Fn->addFnAttr(llvm::Attribute::SanitizeAddress);
-  if (IGM.IRGen.Opts.Sanitize == SanitizerKind::Thread)
-    Fn->addFnAttr(llvm::Attribute::SanitizeThread);
-
   emitPrologue();
 }
 
@@ -78,6 +70,11 @@ SILModule &IRGenFunction::getSILModule() const {
 
 Lowering::TypeConverter &IRGenFunction::getSILTypes() const {
   return IGM.getSILTypes();
+}
+
+// Returns the default atomicity of the module.
+Atomicity IRGenFunction::getDefaultAtomicity() {
+  return getSILModule().isDefaultAtomic() ? Atomicity::Atomic : Atomicity::NonAtomic;
 }
 
 /// Call the llvm.memcpy intrinsic.  The arguments need not already

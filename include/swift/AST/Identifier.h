@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -375,15 +375,15 @@ public:
   }
 
   friend bool operator<=(DeclName lhs, DeclName rhs) {
-    return lhs.compare(lhs) <= 0;
+    return lhs.compare(rhs) <= 0;
   }
 
   friend bool operator>(DeclName lhs, DeclName rhs) {
-    return lhs.compare(lhs) > 0;
+    return lhs.compare(rhs) > 0;
   }
 
   friend bool operator>=(DeclName lhs, DeclName rhs) {
-    return lhs.compare(lhs) >= 0;
+    return lhs.compare(rhs) >= 0;
   }
 
   void *getOpaqueValue() const { return SimpleOrCompound.getOpaqueValue(); }
@@ -432,6 +432,12 @@ public:
   /// Form a selector with the given number of arguments and the given selector
   /// pieces.
   ObjCSelector(ASTContext &ctx, unsigned numArgs, ArrayRef<Identifier> pieces);
+
+  /// Construct an invalid ObjCSelector.
+  ObjCSelector() : Storage() {}
+
+  /// Convert to true if the decl name is valid.
+  explicit operator bool() const { return (bool)Storage; }
 
   /// Determine the number of arguments in the selector.
   ///
@@ -510,6 +516,20 @@ public:
 } // end namespace swift
 
 namespace llvm {
+  // A DeclName is "pointer like".
+  template<typename T> class PointerLikeTypeTraits;
+  template<>
+  class PointerLikeTypeTraits<swift::DeclName> {
+  public:
+    static inline void *getAsVoidPointer(swift::DeclName name) {
+      return name.getOpaqueValue();
+    }
+    static inline swift::DeclName getFromVoidPointer(void *ptr) {
+      return swift::DeclName::getFromOpaqueValue(ptr);
+    }
+    enum { NumLowBitsAvailable = 0 };
+  };
+
   // DeclNames hash just like pointers.
   template<> struct DenseMapInfo<swift::DeclName> {
     static swift::DeclName getEmptyKey() {
@@ -524,7 +544,21 @@ namespace llvm {
     static bool isEqual(swift::DeclName LHS, swift::DeclName RHS) {
       return LHS.getOpaqueValue() == RHS.getOpaqueValue();
     }
-  };  
+  };
+
+  // An ObjCSelector is "pointer like".
+  template<typename T> class PointerLikeTypeTraits;
+  template<>
+  class PointerLikeTypeTraits<swift::ObjCSelector> {
+  public:
+    static inline void *getAsVoidPointer(swift::ObjCSelector name) {
+      return name.getOpaqueValue();
+    }
+    static inline swift::ObjCSelector getFromVoidPointer(void *ptr) {
+      return swift::ObjCSelector::getFromOpaqueValue(ptr);
+    }
+    enum { NumLowBitsAvailable = 0 };
+  };
 
   // ObjCSelectors hash just like pointers.
   template<> struct DenseMapInfo<swift::ObjCSelector> {
